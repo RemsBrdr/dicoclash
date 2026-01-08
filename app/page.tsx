@@ -63,6 +63,7 @@ const DicoClash = () => {
   const heartbeatInterval = useRef<NodeJS.Timeout | null>(null);
   const gameSubscription = useRef<any>(null);
   const roundsSubscription = useRef<any>(null);
+  const matchmakingInterval = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -82,7 +83,6 @@ const DicoClash = () => {
     }
   }, [mounted, currentPlayer]);
 
-  // Timer de la file d'attente
   useEffect(() => {
     if (gameState === "queue") {
       const interval = setInterval(() => {
@@ -94,7 +94,6 @@ const DicoClash = () => {
     }
   }, [gameState]);
 
-  // Timer du jeu
   useEffect(() => {
     if (gameState === "playing" && timeLeft > 0) {
       const interval = setInterval(() => {
@@ -113,14 +112,12 @@ const DicoClash = () => {
   const startHeartbeat = async () => {
     if (!currentPlayer) return;
 
-    // Enregistrer présence initiale
     await supabase.from('presence').upsert({
       player_id: currentPlayer.id,
       last_heartbeat: new Date().toISOString(),
       status: 'online'
     });
 
-    // Heartbeat toutes les 15 secondes
     heartbeatInterval.current = setInterval(async () => {
       await supabase.from('presence').upsert({
         player_id: currentPlayer.id,
@@ -199,7 +196,6 @@ const DicoClash = () => {
     if (!currentPlayer) return;
 
     try {
-      // Rejoindre la file d'attente
       await supabase.from('queue').insert({
         player_id: currentPlayer.id,
         elo_score: Math.round((currentPlayer.score_giver + currentPlayer.score_guesser) / 2)
@@ -207,17 +203,17 @@ const DicoClash = () => {
 
       setGameState("queue");
 
-      // Polling pour le matchmaking (toutes les 2 secondes)
-      const pollInterval = setInterval(async () => {
+      matchmakingInterval.current = setInterval(async () => {
         const { data } = await supabase.rpc('match_players');
 
         if (data && data.length > 0) {
           const match = data[0];
 
           if (match.player1_id === currentPlayer.id || match.player2_id === currentPlayer.id) {
-            clearInterval(pollInterval);
+            if (matchmakingInterval.current) {
+              clearInterval(matchmakingInterval.current);
+            }
 
-            // Récupérer les infos de l'adversaire
             const opponentId = match.player1_id === currentPlayer.id ? match.player2_id : match.player1_id;
             const { data: opponent } = await supabase
               .from('players')
@@ -227,7 +223,6 @@ const DicoClash = () => {
 
             if (opponent) setOpponentPseudo(opponent.pseudo);
 
-            // Charger la partie
             const { data: game } = await supabase
               .from('games')
               .select('*')
@@ -245,9 +240,10 @@ const DicoClash = () => {
         }
       }, 2000);
 
-      // Timeout après 60 secondes
       setTimeout(() => {
-        clearInterval(pollInterval);
+        if (matchmakingInterval.current) {
+          clearInterval(matchmakingInterval.current);
+        }
         if (gameState === "queue") {
           leaveQueue();
           setError("Aucun adversaire trouvé. Réessayez.");
@@ -267,7 +263,6 @@ const DicoClash = () => {
   };
 
   const subscribeToGame = (gameId: string) => {
-    // S'abonner aux mises à jour du jeu
     gameSubscription.current = supabase
       .channel(`game:${gameId}`)
       .on('postgres_changes', {
@@ -275,31 +270,32 @@ const DicoClash = () => {
         schema: 'public',
         table: 'games',
         filter: `id=eq.${gameId}`
-}, (payload: any) => {
-  if (payload.new) {
-    const gameData = payload.new as GameData;
-    setCurrentGame(gameData);
+      }, (payload: any) => {
+        if (payload.new) {
+          const gameData = payload.new as GameData;
+          setCurrentGame(gameData);
 
-    if (gameData.status === 'finished') {
-      handleGameEnd(gameData);
-    }
-  }
-})
+          if (gameData.status === 'finished') {
+            handleGameEnd(gameData);
+          }
+        }
+      })
       .subscribe();
 
-    // S'abonner aux rounds (indices)
     roundsSubscription.current = supabase
       .channel(`rounds:${gameId}`)
       .on('postgres_changes', {
-  event: 'INSERT',
-  schema: 'public',
-  table: 'rounds',
-  filter: `game_id=eq.${gameId}`
-}, (payload: any) => {
-  if (payload.new && payload.new.clues) {
-    setClues(payload.new.clues as string[]);
-  }
-})
+        event: 'INSERT',
+        schema: 'public',
+        table: 'rounds',
+        filter: `game_id=eq.${gameId}`
+      }, (payload: any) => {
+        if (payload.new && payload.new.clues) {
+          setClues(payload.new.clues as string[]);
+        }
+      })
+      .subscribe();
+  };
 
   const unsubscribeFromGame = () => {
     if (gameSubscription.current) {
@@ -324,7 +320,6 @@ const DicoClash = () => {
     setClues(newClues);
     setCurrentClue("");
 
-    // Sauvegarder l'indice dans les rounds
     await supabase.from('rounds').insert({
       game_id: currentGame.id,
       round_number: currentGame.current_round,
@@ -340,7 +335,6 @@ const DicoClash = () => {
     const guessUpper = currentGuess.trim().toUpperCase();
     const isCorrect = guessUpper === currentGame.current_word;
 
-    // Sauvegarder la tentative
     await supabase.from('rounds').insert({
       game_id: currentGame.id,
       round_number: currentGame.current_round,
@@ -352,7 +346,6 @@ const DicoClash = () => {
     });
 
     if (isCorrect) {
-      // Mise à jour du score
       const isPlayer1 = currentGame.player1_id === currentPlayer?.id;
       await supabase.from('games').update({
         [isPlayer1 ? 'player1_score' : 'player2_score']: isPlayer1 ? currentGame.player1_score + 1 : currentGame.player2_score + 1
@@ -363,7 +356,6 @@ const DicoClash = () => {
   };
 
   const handleTimeOut = () => {
-    // Temps écoulé, passer au round suivant
     handleNextRound();
   };
 
@@ -371,12 +363,10 @@ const DicoClash = () => {
     if (!currentGame) return;
 
     if (currentGame.current_round >= 4) {
-      // Partie terminée
       await supabase.from('games').update({
         status: 'finished'
       }).eq('id', currentGame.id);
     } else {
-      // Round suivant
       setGameState("waiting");
       setClues([]);
       setCurrentGuess("");
@@ -410,7 +400,6 @@ const DicoClash = () => {
       ? game.player1_score > game.player2_score
       : game.player2_score > game.player1_score;
 
-    // Mettre à jour les stats
     if (currentPlayer) {
       await supabase.from('players').update({
         total_games: currentPlayer.total_games + 1,
@@ -433,7 +422,6 @@ const DicoClash = () => {
 
   if (!mounted) return null;
 
-  // PAGE DE CONNEXION
   if (gameState === "login") {
     return (
       <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-blue-50 flex items-center justify-center p-4">
@@ -500,7 +488,6 @@ const DicoClash = () => {
     );
   }
 
-  // PAGE D'ACCUEIL
   if (gameState === "home") {
     return (
       <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-blue-50 p-4">
@@ -658,7 +645,6 @@ const DicoClash = () => {
     );
   }
 
-  // FILE D'ATTENTE
   if (gameState === "queue") {
     return (
       <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-blue-50 flex items-center justify-center p-4">
@@ -683,6 +669,9 @@ const DicoClash = () => {
               variant="outline"
               onClick={() => {
                 leaveQueue();
+                if (matchmakingInterval.current) {
+                  clearInterval(matchmakingInterval.current);
+                }
                 setGameState("home");
               }}
             >
@@ -694,7 +683,6 @@ const DicoClash = () => {
     );
   }
 
-  // EN ATTENTE ENTRE ROUNDS
   if (gameState === "waiting") {
     return (
       <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-blue-50 flex items-center justify-center p-4">
@@ -721,7 +709,6 @@ const DicoClash = () => {
     );
   }
 
-  // RÉSULTATS
   if (gameState === "results") {
     const isPlayer1 = currentGame?.player1_id === currentPlayer?.id;
     const playerScore = isPlayer1 ? currentGame?.player1_score : currentGame?.player2_score;
@@ -790,7 +777,6 @@ const DicoClash = () => {
     );
   }
 
-  // INTERFACE DE JEU
   if (gameState === "playing" && currentGame) {
     const isGiver = currentGame.current_giver_id === currentPlayer?.id;
     const timePercent = (timeLeft / 60) * 100;
