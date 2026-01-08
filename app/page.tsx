@@ -275,32 +275,31 @@ const DicoClash = () => {
         schema: 'public',
         table: 'games',
         filter: `id=eq.${gameId}`
-      }, (payload) => {
-        if (payload.new) {
-          setCurrentGame(payload.new as GameData);
+}, (payload: any) => {
+  if (payload.new) {
+    const gameData = payload.new as GameData;
+    setCurrentGame(gameData);
 
-          if (payload.new.status === 'finished') {
-            handleGameEnd(payload.new as GameData);
-          }
-        }
-      })
+    if (gameData.status === 'finished') {
+      handleGameEnd(gameData);
+    }
+  }
+})
       .subscribe();
 
     // S'abonner aux rounds (indices)
     roundsSubscription.current = supabase
       .channel(`rounds:${gameId}`)
       .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'rounds',
-        filter: `game_id=eq.${gameId}`
-      }, (payload) => {
-        if (payload.new && payload.new.clues) {
-          setClues(payload.new.clues);
-        }
-      })
-      .subscribe();
-  };
+  event: 'INSERT',
+  schema: 'public',
+  table: 'rounds',
+  filter: `game_id=eq.${gameId}`
+}, (payload: any) => {
+  if (payload.new && payload.new.clues) {
+    setClues(payload.new.clues as string[]);
+  }
+})
 
   const unsubscribeFromGame = () => {
     if (gameSubscription.current) {
