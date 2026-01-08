@@ -9,7 +9,6 @@ import { Trophy, Clock, User, Zap, Crown, Star, Send, Swords, LogIn, Users, Wifi
 import { supabase } from "@/lib/supabase";
 
 type GameState = "login" | "home" | "queue" | "playing" | "waiting" | "results";
-type Role = "giver" | "guesser";
 
 interface Player {
   id: string;
@@ -683,24 +682,30 @@ const DicoClash = () => {
     );
   }
 
-if (gameState === "waiting") {
+  if (gameState === "waiting") {
+    if (!currentGame) return null;
+
+    const isPlayer1 = currentGame.player1_id === currentPlayer?.id;
+    const playerScore = isPlayer1 ? currentGame.player1_score : currentGame.player2_score;
+    const opponentScore = isPlayer1 ? currentGame.player2_score : currentGame.player1_score;
+
     return (
       <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-blue-50 flex items-center justify-center p-4">
         <Card className="w-full max-w-md border-2 border-red-100">
           <CardContent className="p-8 text-center space-y-6">
             <h2 className="text-2xl font-bold">Prochain round...</h2>
             <div className="text-4xl font-bold text-red-600">
-              Round {currentGame ? currentGame.current_round + 1 : 1}/4
+              Round {currentGame.current_round + 1}/4
             </div>
             <div className="flex justify-center gap-8">
               <div className="text-center">
                 <p className="text-sm text-gray-600 mb-1">{currentPlayer?.pseudo}</p>
-                <p className="text-3xl font-bold text-blue-600">{currentGame?.player1_id === currentPlayer?.id ? currentGame.player1_score : currentGame?.player2_score}</p>
+                <p className="text-3xl font-bold text-blue-600">{playerScore}</p>
               </div>
               <div className="text-4xl text-gray-300">-</div>
               <div className="text-center">
                 <p className="text-sm text-gray-600 mb-1">{opponentPseudo}</p>
-                <p className="text-3xl font-bold text-red-600">{currentGame?.player1_id === currentPlayer?.id ? currentGame.player2_score : currentGame?.player1_score}</p>
+                <p className="text-3xl font-bold text-red-600">{opponentScore}</p>
               </div>
             </div>
           </CardContent>
@@ -710,10 +715,12 @@ if (gameState === "waiting") {
   }
 
   if (gameState === "results") {
-    const isPlayer1 = currentGame?.player1_id === currentPlayer?.id;
-    const playerScore = isPlayer1 ? currentGame?.player1_score : currentGame?.player2_score;
-    const opponentScore = isPlayer1 ? currentGame?.player2_score : currentGame?.player1_score;
-    const isWinner = playerScore! > opponentScore!;
+    if (!currentGame) return null;
+
+    const isPlayer1 = currentGame.player1_id === currentPlayer?.id;
+    const playerScore = isPlayer1 ? currentGame.player1_score : currentGame.player2_score;
+    const opponentScore = isPlayer1 ? currentGame.player2_score : currentGame.player1_score;
+    const isWinner = playerScore > opponentScore;
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-blue-50 flex items-center justify-center p-4">
@@ -780,6 +787,9 @@ if (gameState === "waiting") {
   if (gameState === "playing" && currentGame) {
     const isGiver = currentGame.current_giver_id === currentPlayer?.id;
     const timePercent = (timeLeft / 60) * 100;
+    const isPlayer1 = currentGame.player1_id === currentPlayer?.id;
+    const playerScore = isPlayer1 ? currentGame.player1_score : currentGame.player2_score;
+    const opponentScore = isPlayer1 ? currentGame.player2_score : currentGame.player1_score;
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-blue-50 p-4">
@@ -799,13 +809,9 @@ if (gameState === "waiting") {
                 <span>vs {opponentPseudo}</span>
               </div>
               <div className="text-xl font-bold">
-                <span className="text-blue-600">
-                  {currentGame.player1_id === currentPlayer?.id ? currentGame.player1_score : currentGame.player2_score}
-                </span>
+                <span className="text-blue-600">{playerScore}</span>
                 <span className="text-gray-400 mx-2">-</span>
-                <span className="text-red-600">
-                  {currentGame.player1_id === currentPlayer?.id ? currentGame.player2_score : currentGame.player1_score}
-                </span>
+                <span className="text-red-600">{opponentScore}</span>
               </div>
             </div>
           </div>
