@@ -195,6 +195,8 @@ const DicoClash = () => {
     if (!currentPlayer) return;
 
     try {
+      console.log('🎯 Rejoindre la queue pour', currentPlayer.pseudo);
+
       await supabase.from('queue').insert({
         player_id: currentPlayer.id,
         elo_score: Math.round((currentPlayer.score_giver + currentPlayer.score_guesser) / 2)
@@ -203,12 +205,57 @@ const DicoClash = () => {
       setGameState("queue");
 
       matchmakingInterval.current = setInterval(async () => {
-        const { data } = await supabase.rpc('match_players');
+        console.log('🔍 Polling matchmaking pour', currentPlayer.pseudo);
+
+        // D'abord vérifier si on est déjà dans une partie
+        const { data: existingGame } = await supabase
+          .from('games')
+          .select('*')
+          .or(`player1_id.eq.${currentPlayer.id},player2_id.eq.${currentPlayer.id}`)
+          .eq('status', 'playing')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+
+        if (existingGame) {
+          console.log('✅ Partie existante trouvée !', existingGame);
+
+          if (matchmakingInterval.current) {
+            clearInterval(matchmakingInterval.current);
+          }
+
+          const opponentId = existingGame.player1_id === currentPlayer.id
+            ? existingGame.player2_id
+            : existingGame.player1_id;
+
+          const { data: opponent } = await supabase
+            .from('players')
+            .select('pseudo')
+            .eq('id', opponentId)
+            .single();
+
+          if (opponent) setOpponentPseudo(opponent.pseudo);
+
+          setCurrentGame(existingGame);
+          setTimeLeft(60);
+          setClues([]);
+          subscribeToGame(existingGame.id);
+          setGameState("playing");
+          return;
+        }
+
+        // Sinon, essayer de matcher
+        console.log('🎲 Tentative de match...');
+        const { data, error } = await supabase.rpc('match_players');
+        console.log('📊 Résultat match_players:', data, error);
 
         if (data && data.length > 0) {
           const match = data[0];
+          console.log('✅ Match créé !', match);
 
           if (match.player1_id === currentPlayer.id || match.player2_id === currentPlayer.id) {
+            console.log('🎮 C\'est notre match !');
+
             if (matchmakingInterval.current) {
               clearInterval(matchmakingInterval.current);
             }
@@ -251,6 +298,7 @@ const DicoClash = () => {
       }, 60000);
 
     } catch (err: any) {
+      console.error('❌ Erreur joinQueue:', err);
       setError(err.message);
       setGameState("home");
     }
