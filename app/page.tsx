@@ -683,7 +683,7 @@ const DicoClash = () => {
     );
   }
 
-  if (gameState === "waiting") {
+if (gameState === "waiting") {
     return (
       <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-blue-50 flex items-center justify-center p-4">
         <Card className="w-full max-w-md border-2 border-red-100">
