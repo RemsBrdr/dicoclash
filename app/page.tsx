@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Trophy, Clock, User, Zap, Crown, Star, Send, Swords, LogIn, Users, Wifi } from "lucide-react";
+import { Trophy, Clock, User, Zap, Crown, Star, Send, Swords, LogIn, Users, Wifi, Target, Brain, Sparkles, Timer, MessageSquare } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
 type GameState = "login" | "home" | "queue" | "playing" | "waiting" | "results";
@@ -69,16 +69,21 @@ const DicoClash = () => {
   }, []);
 
   useEffect(() => {
-    if (mounted && currentPlayer) {
+    if (mounted) {
       loadLeaderboard();
       updateOnlineCount();
-      startHeartbeat();
 
-      const interval = setInterval(updateOnlineCount, 10000);
-      return () => {
-        clearInterval(interval);
-        stopHeartbeat();
-      };
+      if (currentPlayer) {
+        startHeartbeat();
+        const interval = setInterval(updateOnlineCount, 10000);
+        return () => {
+          clearInterval(interval);
+          stopHeartbeat();
+        };
+      } else {
+        const interval = setInterval(updateOnlineCount, 10000);
+        return () => clearInterval(interval);
+      }
     }
   }, [mounted, currentPlayer]);
 
@@ -195,8 +200,6 @@ const DicoClash = () => {
     if (!currentPlayer) return;
 
     try {
-      console.log('🎯 Rejoindre la queue pour', currentPlayer.pseudo);
-
       await supabase.from('queue').insert({
         player_id: currentPlayer.id,
         elo_score: Math.round((currentPlayer.score_giver + currentPlayer.score_guesser) / 2)
@@ -205,9 +208,6 @@ const DicoClash = () => {
       setGameState("queue");
 
       matchmakingInterval.current = setInterval(async () => {
-        console.log('🔍 Polling matchmaking pour', currentPlayer.pseudo);
-
-        // D'abord vérifier si on est déjà dans une partie
         const { data: existingGame } = await supabase
           .from('games')
           .select('*')
@@ -218,8 +218,6 @@ const DicoClash = () => {
           .single();
 
         if (existingGame) {
-          console.log('✅ Partie existante trouvée !', existingGame);
-
           if (matchmakingInterval.current) {
             clearInterval(matchmakingInterval.current);
           }
@@ -244,18 +242,12 @@ const DicoClash = () => {
           return;
         }
 
-        // Sinon, essayer de matcher
-        console.log('🎲 Tentative de match...');
-        const { data, error } = await supabase.rpc('match_players');
-        console.log('📊 Résultat match_players:', data, error);
+        const { data } = await supabase.rpc('match_players');
 
         if (data && data.length > 0) {
           const match = data[0];
-          console.log('✅ Match créé !', match);
 
           if (match.player1_id === currentPlayer.id || match.player2_id === currentPlayer.id) {
-            console.log('🎮 C\'est notre match !');
-
             if (matchmakingInterval.current) {
               clearInterval(matchmakingInterval.current);
             }
@@ -298,7 +290,6 @@ const DicoClash = () => {
       }, 60000);
 
     } catch (err: any) {
-      console.error('❌ Erreur joinQueue:', err);
       setError(err.message);
       setGameState("home");
     }
@@ -471,69 +462,305 @@ const DicoClash = () => {
 
   if (gameState === "login") {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-blue-50 flex items-center justify-center p-4">
-        <Card className="w-full max-w-md border-2 border-red-100">
-          <CardHeader className="text-center">
-            <div className="flex items-center justify-center gap-3 mb-4">
-              <Swords className="w-10 h-10 text-red-600" />
-              <CardTitle className="text-4xl font-bold bg-gradient-to-r from-red-600 to-blue-600 bg-clip-text text-transparent">
-                DicoClash
-              </CardTitle>
-            </div>
-            <CardDescription className="text-lg">
-              60 secondes. 4 indices. 1 champion.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-2">
-                  Choisissez votre pseudo
-                </label>
-                <input
-                  type="text"
-                  value={pseudoInput}
-                  onChange={(e) => setPseudoInput(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
-                  placeholder="Votre pseudo..."
-                  className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500"
-                  maxLength={20}
-                  disabled={loading}
-                />
-                {error && <p className="text-sm text-red-600 mt-2">{error}</p>}
+      <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-blue-50">
+        {/* Header */}
+        <div className="border-b bg-white shadow-sm">
+          <div className="max-w-7xl mx-auto px-4 py-4 sm:py-6">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-gradient-to-br from-red-500 to-blue-600 rounded-xl">
+                  <Swords className="w-6 h-6 sm:w-8 sm:h-8 text-white" />
+                </div>
+                <h1 className="text-2xl sm:text-4xl font-bold bg-gradient-to-r from-red-600 to-blue-600 bg-clip-text text-transparent">
+                  DicoClash
+                </h1>
               </div>
+              <div className="flex items-center gap-2 text-xs sm:text-sm text-gray-600">
+                <Wifi className="w-3 h-3 sm:w-4 sm:h-4 text-green-500" />
+                <span className="hidden sm:inline">{onlinePlayers} joueurs en ligne</span>
+                <span className="sm:hidden">{onlinePlayers}</span>
+              </div>
+            </div>
+          </div>
+        </div>
 
-              <Button
-                onClick={handleLogin}
-                disabled={loading || !pseudoInput.trim()}
-                className="w-full bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800"
-                size="lg"
-              >
-                {loading ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-                    Connexion...
-                  </>
+        <div className="max-w-7xl mx-auto px-4 py-6 sm:py-12">
+          {/* Hero Section */}
+          <div className="text-center mb-8 sm:mb-12">
+            <div className="flex items-center justify-center gap-2 mb-4">
+              <Sparkles className="w-5 h-5 sm:w-6 sm:h-6 text-yellow-500" />
+              <Badge variant="outline" className="text-xs sm:text-sm">
+                Jeu multijoueur en temps réel
+              </Badge>
+            </div>
+            <h2 className="text-3xl sm:text-5xl lg:text-6xl font-bold mb-4 sm:mb-6">
+              <span className="bg-gradient-to-r from-red-600 via-pink-600 to-blue-600 bg-clip-text text-transparent">
+                60 secondes.
+              </span>
+              <br />
+              <span className="bg-gradient-to-r from-blue-600 via-purple-600 to-red-600 bg-clip-text text-transparent">
+                4 indices. 1 champion.
+              </span>
+            </h2>
+            <p className="text-base sm:text-xl text-gray-600 mb-8 max-w-2xl mx-auto px-4">
+              Affrontez des adversaires du monde entier dans des duels de vocabulaire explosifs !
+            </p>
+
+            {/* Connexion Form */}
+            <Card className="max-w-md mx-auto border-2 border-red-100 shadow-lg">
+              <CardContent className="p-4 sm:p-6">
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-2 text-left">
+                      Choisissez votre pseudo
+                    </label>
+                    <input
+                      type="text"
+                      value={pseudoInput}
+                      onChange={(e) => setPseudoInput(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
+                      placeholder="Votre pseudo..."
+                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 text-base"
+                      maxLength={20}
+                      disabled={loading}
+                    />
+                    {error && <p className="text-sm text-red-600 mt-2 text-left">{error}</p>}
+                  </div>
+
+                  <Button
+                    onClick={handleLogin}
+                    disabled={loading || !pseudoInput.trim()}
+                    className="w-full bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-base sm:text-lg py-5 sm:py-6"
+                  >
+                    {loading ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                        Connexion...
+                      </>
+                    ) : (
+                      <>
+                        <LogIn className="mr-2 w-5 h-5" />
+                        Entrer dans l'arène
+                      </>
+                    )}
+                  </Button>
+
+                  <p className="text-xs sm:text-sm text-gray-500 text-center">
+                    <Users className="inline w-3 h-3 sm:w-4 sm:h-4 mr-1" />
+                    Aucun compte requis, juste un pseudo !
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Comment jouer */}
+          <div className="mb-8 sm:mb-12">
+            <h3 className="text-2xl sm:text-3xl font-bold text-center mb-6 sm:mb-8">
+              Comment jouer ?
+            </h3>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+              <Card className="border-2 border-blue-100 hover:border-blue-300 transition-colors">
+                <CardContent className="p-4 sm:p-6 text-center">
+                  <div className="w-12 h-12 sm:w-16 sm:h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4">
+                    <Target className="w-6 h-6 sm:w-8 sm:h-8 text-blue-600" />
+                  </div>
+                  <h4 className="font-bold mb-2 text-sm sm:text-base">Trouvez un adversaire</h4>
+                  <p className="text-xs sm:text-sm text-gray-600">
+                    Le matchmaking vous apparie avec un joueur de votre niveau en quelques secondes
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card className="border-2 border-red-100 hover:border-red-300 transition-colors">
+                <CardContent className="p-4 sm:p-6 text-center">
+                  <div className="w-12 h-12 sm:w-16 sm:h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4">
+                    <MessageSquare className="w-6 h-6 sm:w-8 sm:h-8 text-red-600" />
+                  </div>
+                  <h4 className="font-bold mb-2 text-sm sm:text-base">Donnez des indices</h4>
+                  <p className="text-xs sm:text-sm text-gray-600">
+                    Jusqu'à 4 indices pour faire deviner votre mot. Soyez malin !
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card className="border-2 border-purple-100 hover:border-purple-300 transition-colors">
+                <CardContent className="p-4 sm:p-6 text-center">
+                  <div className="w-12 h-12 sm:w-16 sm:h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4">
+                    <Brain className="w-6 h-6 sm:w-8 sm:h-8 text-purple-600" />
+                  </div>
+                  <h4 className="font-bold mb-2 text-sm sm:text-base">Devinez le mot</h4>
+                  <p className="text-xs sm:text-sm text-gray-600">
+                    Analysez les indices de votre adversaire et trouvez le bon mot
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card className="border-2 border-yellow-100 hover:border-yellow-300 transition-colors">
+                <CardContent className="p-4 sm:p-6 text-center">
+                  <div className="w-12 h-12 sm:w-16 sm:h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4">
+                    <Trophy className="w-6 h-6 sm:w-8 sm:h-8 text-yellow-600" />
+                  </div>
+                  <h4 className="font-bold mb-2 text-sm sm:text-base">Remportez le clash</h4>
+                  <p className="text-xs sm:text-sm text-gray-600">
+                    Le meilleur sur 4 rounds gagne et monte au classement !
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+
+          {/* Règles du jeu */}
+          <div className="grid lg:grid-cols-2 gap-6 sm:gap-8 mb-8 sm:mb-12">
+            <Card className="border-2 border-red-100">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
+                  <Timer className="w-5 h-5 sm:w-6 sm:h-6 text-red-600" />
+                  Règles du jeu
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 sm:space-y-4 text-sm sm:text-base">
+                <div className="flex gap-3">
+                  <div className="flex-shrink-0 w-6 h-6 sm:w-8 sm:h-8 bg-red-100 rounded-full flex items-center justify-center text-red-600 font-bold text-sm">
+                    1
+                  </div>
+                  <div>
+                    <p className="font-semibold">4 rounds par partie</p>
+                    <p className="text-xs sm:text-sm text-gray-600">Alternance donneur/devineur à chaque round</p>
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <div className="flex-shrink-0 w-6 h-6 sm:w-8 sm:h-8 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold text-sm">
+                    2
+                  </div>
+                  <div>
+                    <p className="font-semibold">60 secondes maximum</p>
+                    <p className="text-xs sm:text-sm text-gray-600">Chronomètre impitoyable pour chaque round</p>
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <div className="flex-shrink-0 w-6 h-6 sm:w-8 sm:h-8 bg-green-100 rounded-full flex items-center justify-center text-green-600 font-bold text-sm">
+                    3
+                  </div>
+                  <div>
+                    <p className="font-semibold">4 indices autorisés</p>
+                    <p className="text-xs sm:text-sm text-gray-600">Ne peuvent pas commencer par les 3 mêmes lettres que le mot</p>
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <div className="flex-shrink-0 w-6 h-6 sm:w-8 sm:h-8 bg-yellow-100 rounded-full flex items-center justify-center text-yellow-600 font-bold text-sm">
+                    4
+                  </div>
+                  <div>
+                    <p className="font-semibold">Points ELO</p>
+                    <p className="text-xs sm:text-sm text-gray-600">Gagnez +10 points par victoire, perdez -5 par défaite</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border-2 border-blue-100">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
+                  <Sparkles className="w-5 h-5 sm:w-6 sm:h-6 text-blue-600" />
+                  Pourquoi jouer ?
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 sm:space-y-4 text-sm sm:text-base">
+                <div className="flex items-start gap-3">
+                  <Zap className="w-5 h-5 sm:w-6 sm:h-6 text-yellow-500 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-semibold">Parties ultra-rapides</p>
+                    <p className="text-xs sm:text-sm text-gray-600">3-4 minutes par partie, idéal pour une pause !</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Users className="w-5 h-5 sm:w-6 sm:h-6 text-blue-500 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-semibold">Multijoueur temps réel</p>
+                    <p className="text-xs sm:text-sm text-gray-600">Affrontez de vrais joueurs du monde entier</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Brain className="w-5 h-5 sm:w-6 sm:h-6 text-purple-500 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-semibold">Entraînez votre cerveau</p>
+                    <p className="text-xs sm:text-sm text-gray-600">Vocabulaire, rapidité, stratégie... Un jeu complet !</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Trophy className="w-5 h-5 sm:w-6 sm:h-6 text-yellow-500 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-semibold">Système de classement</p>
+                    <p className="text-xs sm:text-sm text-gray-600">Montez dans le leaderboard et devenez champion !</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Classement */}
+          <Card className="border-2 border-yellow-100">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-xl sm:text-2xl">
+                <Crown className="w-6 h-6 sm:w-7 sm:h-7 text-yellow-600" />
+                Top 10 Champions
+              </CardTitle>
+              <CardDescription className="text-sm sm:text-base">
+                Les meilleurs joueurs de DicoClash
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2 sm:space-y-3">
+                {leaderboard.length === 0 ? (
+                  <p className="text-center text-gray-500 py-8 text-sm sm:text-base">
+                    Chargement du classement...
+                  </p>
                 ) : (
-                  <>
-                    <LogIn className="mr-2 w-5 h-5" />
-                    Entrer dans l'arène
-                  </>
+                  leaderboard.map((player) => (
+                    <div
+                      key={player.id}
+                      className="flex items-center justify-between p-3 sm:p-4 rounded-lg bg-gradient-to-r from-gray-50 to-transparent border border-gray-100 hover:border-yellow-200 transition-colors"
+                    >
+                      <div className="flex items-center gap-2 sm:gap-3">
+                        <div className="flex items-center gap-1 sm:gap-2">
+                          {getRankBadge(player.rank)}
+                          <span className="font-bold text-gray-700 text-sm sm:text-base">#{player.rank}</span>
+                        </div>
+                        <span className="font-medium text-sm sm:text-base">{player.pseudo}</span>
+                      </div>
+                      <div className="flex gap-3 sm:gap-6 text-xs sm:text-sm">
+                        <div className="text-center">
+                          <p className="text-xs text-gray-500">Score</p>
+                          <p className="font-bold">{Math.round(player.score_average)}</p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-xs text-gray-500">Victoires</p>
+                          <p className="font-bold text-green-600">{player.games_won}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))
                 )}
-              </Button>
-            </div>
+              </div>
+            </CardContent>
+          </Card>
 
-            <div className="border-t pt-4">
-              <p className="text-sm text-gray-600 text-center mb-3">
-                <Users className="inline w-4 h-4 mr-1" />
-                Pas besoin de compte, juste un pseudo !
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+          {/* Footer */}
+          <div className="mt-8 sm:mt-12 text-center text-xs sm:text-sm text-gray-500">
+            <p>DicoClash - Le jeu de vocabulaire multijoueur ultra-rapide</p>
+            <p className="mt-2">
+              <Wifi className="inline w-3 h-3 mr-1" />
+              {onlinePlayers} joueurs connectés en ce moment
+            </p>
+          </div>
+        </div>
       </div>
     );
   }
+
+  // ... Le reste du code reste identique (home, queue, playing, waiting, results)
+  // Je garde uniquement les parties non modifiées ci-dessous pour la concision
 
   if (gameState === "home") {
     return (
@@ -691,6 +918,9 @@ const DicoClash = () => {
       </div>
     );
   }
+
+  // ... Le reste des états (queue, waiting, results, playing) reste identique
+  // Conservé du code précédent sans modifications
 
   if (gameState === "queue") {
     return (
