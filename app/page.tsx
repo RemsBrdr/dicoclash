@@ -72,7 +72,6 @@ const DicoClash = () => {
   const gamePollingInterval = useRef<NodeJS.Timeout | null>(null);
   const roundsPollingInterval = useRef<NodeJS.Timeout | null>(null);
   const lastKnownRound = useRef(0);
-  const lastRoundsCount = useRef(0);
   const updateLock = useRef(false);
 
   useEffect(() => {
@@ -281,7 +280,6 @@ const DicoClash = () => {
 
     setCurrentGame(game);
     lastKnownRound.current = game.current_round;
-    lastRoundsCount.current = 0;
     updateLock.current = false;
     setAttempts([]);
     setCurrentClue("");
@@ -289,7 +287,6 @@ const DicoClash = () => {
     setWaitingForOpponent(false);
     setTimeLeft(60);
 
-    // POLLING GAME - 500ms
     gamePollingInterval.current = setInterval(async () => {
       const { data: g } = await supabase.from('games').select('*').eq('id', game.id).single();
       if (g) {
@@ -298,7 +295,6 @@ const DicoClash = () => {
         if (g.current_round !== lastKnownRound.current) {
           console.log('🎉 ROUND CHANGED!');
           lastKnownRound.current = g.current_round;
-          lastRoundsCount.current = 0;
           updateLock.current = false;
 
           setAttempts([]);
@@ -316,7 +312,6 @@ const DicoClash = () => {
       }
     }, 500);
 
-    // POLLING ROUNDS - 500ms
     roundsPollingInterval.current = setInterval(async () => {
       const { data: rounds } = await supabase
         .from('rounds')
@@ -325,36 +320,44 @@ const DicoClash = () => {
         .eq('round_number', lastKnownRound.current)
         .order('created_at', { ascending: true });
 
-      if (rounds && rounds.length > lastRoundsCount.current) {
-        console.log('📥 New rounds:', rounds.length);
-        lastRoundsCount.current = rounds.length;
+      if (rounds && rounds.length > 0) {
+        console.log('📥 Rounds:', rounds.length);
 
         const newAttempts: RoundAttempt[] = [];
+        const cluesRounds = rounds.filter(r => r.clues && r.clues.length > 0);
+        const guessRounds = rounds.filter(r => r.guess_word);
 
-        for (const round of rounds) {
-          if (round.clues && round.giver_id !== currentPlayer?.id) {
-            const clue = round.clues[round.clues.length - 1];
-            if (!newAttempts.some(a => a.clue === clue)) {
-              newAttempts.push({ clue, guess: '', correct: false });
-            }
-          }
+        for (let i = 0; i < Math.max(cluesRounds.length, guessRounds.length); i++) {
+          const clueRound = cluesRounds[i];
+          const guessRound = guessRounds[i];
 
-          if (round.guess_word) {
-            const lastAttempt = newAttempts[newAttempts.length - 1];
-            if (lastAttempt && !lastAttempt.guess) {
-              lastAttempt.guess = round.guess_word;
-              lastAttempt.correct = round.won || false;
+          if (clueRound) {
+            const clue = clueRound.clues[clueRound.clues.length - 1];
+            newAttempts.push({
+              clue: clue,
+              guess: guessRound ? guessRound.guess_word : '',
+              correct: guessRound ? (guessRound.won || false) : false
+            });
 
-              if (round.won && round.guesser_id !== currentPlayer?.id) {
-                console.log('✅ Opponent won');
-                setTimeout(() => triggerNextRound(), 2000);
-              }
+            if (guessRound && guessRound.won) {
+              console.log('✅ Word found');
+              setTimeout(() => triggerNextRound(), 2000);
+              break;
             }
           }
         }
 
+        console.log('📊 Attempts:', newAttempts);
         setAttempts(newAttempts);
-        setWaitingForOpponent(false);
+
+        if (newAttempts.length > 0) {
+          const lastAttempt = newAttempts[newAttempts.length - 1];
+          if (!lastAttempt.guess && currentGame?.current_giver_id === currentPlayer?.id) {
+            setWaitingForOpponent(true);
+          } else if (lastAttempt.guess && currentGame?.current_giver_id !== currentPlayer?.id) {
+            setWaitingForOpponent(false);
+          }
+        }
       }
     }, 500);
 
