@@ -341,11 +341,9 @@ const DicoClash = () => {
         if (payload.new) {
           const newRound = payload.new;
 
-          // Si c'est un indice
           if (newRound.clues && newRound.clues.length > 0) {
             const lastClue = newRound.clues[newRound.clues.length - 1];
 
-            // Vérifier si on a déjà cet indice
             const existingAttempt = attempts.find(a => a.clue === lastClue);
             if (!existingAttempt) {
               setAttempts(prev => [...prev, { clue: lastClue, guess: '', correct: false }]);
@@ -353,7 +351,6 @@ const DicoClash = () => {
             }
           }
 
-          // Si c'est une réponse
           if (newRound.guess_word) {
             setAttempts(prev => {
               const newAttempts = [...prev];
@@ -395,12 +392,10 @@ const DicoClash = () => {
       return;
     }
 
-    // Ajouter l'indice localement
     setAttempts(prev => [...prev, { clue: currentClue.trim(), guess: '', correct: false }]);
     setCurrentClue("");
     setWaitingForOpponent(true);
 
-    // Sauvegarder l'indice
     const allClues = [...attempts.map(a => a.clue), currentClue.trim()];
 
     await supabase.from('rounds').insert({
@@ -411,7 +406,6 @@ const DicoClash = () => {
       clues: allClues
     });
 
-    // Mettre à jour le nombre de tentatives dans la partie
     await supabase.from('games').update({
       attempts_used: allClues.length
     }).eq('id', currentGame.id);
@@ -423,7 +417,6 @@ const DicoClash = () => {
     const guessUpper = currentGuess.trim().toUpperCase();
     const isCorrect = guessUpper === currentGame.current_word;
 
-    // Mettre à jour localement
     setAttempts(prev => {
       const newAttempts = [...prev];
       const lastAttempt = newAttempts[newAttempts.length - 1];
@@ -437,7 +430,6 @@ const DicoClash = () => {
     setCurrentGuess("");
     setWaitingForOpponent(true);
 
-    // Sauvegarder la tentative
     await supabase.from('rounds').insert({
       game_id: currentGame.id,
       round_number: currentGame.current_round,
@@ -449,7 +441,6 @@ const DicoClash = () => {
     });
 
     if (isCorrect) {
-      // Point gagné
       const isPlayer1 = currentGame.player1_id === currentPlayer?.id;
       await supabase.from('games').update({
         [isPlayer1 ? 'player1_score' : 'player2_score']: isPlayer1 ? currentGame.player1_score + 1 : currentGame.player2_score + 1
@@ -457,10 +448,8 @@ const DicoClash = () => {
 
       setTimeout(() => handleNextRound(), 2000);
     } else if (attempts.length >= 4) {
-      // 4 tentatives échouées, round perdu
       setTimeout(() => handleNextRound(), 2000);
     } else {
-      // Continuer, redonner la main au donneur
       setWaitingForOpponent(false);
     }
   };
@@ -827,8 +816,302 @@ const DicoClash = () => {
     );
   }
 
-  // ... (Les autres états home, queue, waiting, results restent identiques au code précédent)
-  // Je continue avec l'état "playing" qui change
+  if (gameState === "home") {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-blue-50 p-4">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center py-8">
+            <div className="flex items-center justify-center gap-3 mb-4">
+              <Swords className="w-12 h-12 text-red-600" />
+              <h1 className="text-5xl font-bold bg-gradient-to-r from-red-600 to-blue-600 bg-clip-text text-transparent">
+                DicoClash
+              </h1>
+            </div>
+            <p className="text-gray-700 text-xl font-semibold mb-2">
+              60 secondes. 4 tentatives. 1 champion.
+            </p>
+            <Badge variant="outline" className="text-base">
+              <User className="w-4 h-4 mr-2" />
+              {currentPlayer?.pseudo}
+            </Badge>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-6 mb-8">
+            <Card className="md:col-span-2 border-2 border-red-100">
+              <CardContent className="p-8">
+                <div className="text-center space-y-6">
+                  <div>
+                    <h2 className="text-3xl font-bold mb-3">Prêt pour le clash ?</h2>
+                    <p className="text-gray-600 mb-6">
+                      Affrontez des adversaires réels en temps réel
+                    </p>
+                  </div>
+
+                  <Button
+                    onClick={joinQueue}
+                    className="text-xl px-12 py-6 h-auto bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800"
+                  >
+                    <Zap className="mr-2 w-6 h-6" />
+                    Trouver un adversaire
+                  </Button>
+
+                  <div className="flex items-center justify-center gap-2 text-sm text-gray-500">
+                    <Wifi className="w-4 h-4 text-green-500" />
+                    <span>{onlinePlayers} joueurs en ligne</span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Trophy className="w-5 h-5 text-yellow-600" />
+                  Vos statistiques
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-gray-600">Parties jouées</span>
+                  <span className="font-bold">{currentPlayer?.total_games || 0}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-gray-600">Victoires</span>
+                  <span className="font-bold text-green-600">{currentPlayer?.games_won || 0}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-gray-600">Score Donneur</span>
+                  <Badge variant="secondary">{currentPlayer?.score_giver || 1500}</Badge>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-gray-600">Score Devineur</span>
+                  <Badge variant="secondary">{currentPlayer?.score_guesser || 1500}</Badge>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Swords className="w-5 h-5 text-red-600" />
+                  Comment jouer
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm text-gray-700">
+                <p>⚔️ Matchs en 1 vs 1 contre de vrais joueurs</p>
+                <p>🏓 Système ping-pong : 4 tentatives maximum</p>
+                <p>⏱️ 60 secondes et 4 aller-retours max</p>
+                <p>🏆 Gagnez des points ELO à chaque victoire</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Crown className="w-5 h-5 text-yellow-600" />
+                Classement des Champions
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {leaderboard.length === 0 ? (
+                  <p className="text-center text-gray-500 py-4">Chargement...</p>
+                ) : (
+                  leaderboard.map((player) => (
+                    <div
+                      key={player.id}
+                      className={`flex items-center justify-between p-3 rounded-lg border ${
+                        player.id === currentPlayer?.id
+                          ? 'bg-red-50 border-red-200'
+                          : 'bg-gradient-to-r from-gray-50 to-transparent border-gray-100'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2">
+                          {getRankBadge(player.rank)}
+                          <span className="font-bold text-gray-700">#{player.rank}</span>
+                        </div>
+                        <span className="font-medium">
+                          {player.pseudo}
+                          {player.id === currentPlayer?.id && (
+                            <Badge variant="outline" className="ml-2 text-xs">Vous</Badge>
+                          )}
+                        </span>
+                      </div>
+                      <div className="flex gap-4 text-sm">
+                        <div className="text-center">
+                          <p className="text-xs text-gray-500">Score</p>
+                          <p className="font-bold">{Math.round(player.score_average)}</p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-xs text-gray-500">Victoires</p>
+                          <p className="font-bold text-green-600">{player.games_won}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="mt-6 text-center">
+            <Button
+              variant="outline"
+              onClick={() => {
+                stopHeartbeat();
+                setCurrentPlayer(null);
+                setGameState("login");
+              }}
+            >
+              Changer de pseudo
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (gameState === "queue") {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-blue-50 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md border-2 border-red-100">
+          <CardContent className="p-8 text-center space-y-6">
+            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto">
+              <Users className="w-8 h-8 text-red-600 animate-pulse" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold mb-2">Recherche d'adversaire...</h2>
+              <p className="text-gray-600">Un vrai joueur va vous rejoindre</p>
+            </div>
+            <div className="space-y-2">
+              <Progress value={(queueTime % 3) * 33} className="h-2" />
+              <p className="text-sm text-gray-500">{queueTime}s écoulées</p>
+              <p className="text-xs text-gray-400">
+                <Wifi className="inline w-3 h-3 mr-1" />
+                {onlinePlayers} joueurs en ligne
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => {
+                leaveQueue();
+                if (matchmakingInterval.current) {
+                  clearInterval(matchmakingInterval.current);
+                }
+                setGameState("home");
+              }}
+            >
+              Annuler
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (gameState === "waiting") {
+    if (!currentGame) return null;
+
+    const isPlayer1 = currentGame.player1_id === currentPlayer?.id;
+    const playerScore = isPlayer1 ? currentGame.player1_score : currentGame.player2_score;
+    const opponentScore = isPlayer1 ? currentGame.player2_score : currentGame.player1_score;
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-blue-50 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md border-2 border-red-100">
+          <CardContent className="p-8 text-center space-y-6">
+            <h2 className="text-2xl font-bold">Prochain round...</h2>
+            <div className="text-4xl font-bold text-red-600">
+              Round {currentGame.current_round + 1}/4
+            </div>
+            <div className="flex justify-center gap-8">
+              <div className="text-center">
+                <p className="text-sm text-gray-600 mb-1">{currentPlayer?.pseudo}</p>
+                <p className="text-3xl font-bold text-blue-600">{playerScore}</p>
+              </div>
+              <div className="text-4xl text-gray-300">-</div>
+              <div className="text-center">
+                <p className="text-sm text-gray-600 mb-1">{opponentPseudo}</p>
+                <p className="text-3xl font-bold text-red-600">{opponentScore}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (gameState === "results") {
+    if (!currentGame) return null;
+
+    const isPlayer1 = currentGame.player1_id === currentPlayer?.id;
+    const playerScore = isPlayer1 ? currentGame.player1_score : currentGame.player2_score;
+    const opponentScore = isPlayer1 ? currentGame.player2_score : currentGame.player1_score;
+    const isWinner = playerScore > opponentScore;
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-blue-50 flex items-center justify-center p-4">
+        <Card className="w-full max-w-2xl border-2 border-red-100">
+          <CardContent className="p-8 space-y-6">
+            <div className="text-center">
+              {isWinner ? (
+                <div className="w-20 h-20 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Trophy className="w-10 h-10 text-yellow-600" />
+                </div>
+              ) : (
+                <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Star className="w-10 h-10 text-gray-400" />
+                </div>
+              )}
+              <h2 className="text-3xl font-bold mb-2">
+                {playerScore === opponentScore ? "Match nul !" : isWinner ? "Victoire !" : "Défaite"}
+              </h2>
+              <p className="text-gray-600">Partie terminée</p>
+            </div>
+
+            <div className="flex justify-center gap-12 py-6">
+              <div className="text-center">
+                <p className="text-sm text-gray-600 mb-2">{currentPlayer?.pseudo}</p>
+                <p className="text-5xl font-bold text-blue-600">{playerScore}</p>
+              </div>
+              <div className="text-5xl text-gray-300 self-center">-</div>
+              <div className="text-center">
+                <p className="text-sm text-gray-600 mb-2">{opponentPseudo}</p>
+                <p className="text-5xl font-bold text-red-600">{opponentScore}</p>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <Button
+                onClick={() => {
+                  setCurrentGame(null);
+                  setGameState("home");
+                  loadLeaderboard();
+                }}
+                className="flex-1 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800"
+              >
+                <Zap className="mr-2 w-4 h-4" />
+                Nouveau Match
+              </Button>
+              <Button
+                onClick={() => {
+                  setCurrentGame(null);
+                  setGameState("home");
+                  loadLeaderboard();
+                }}
+                variant="outline"
+                className="flex-1"
+              >
+                Accueil
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   if (gameState === "playing" && currentGame) {
     const isGiver = currentGame.current_giver_id === currentPlayer?.id;
@@ -1092,7 +1375,6 @@ const DicoClash = () => {
     );
   }
 
-  // Les autres états (home, queue, waiting, results) restent identiques...
   return null;
 };
 
