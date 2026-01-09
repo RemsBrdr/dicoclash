@@ -31,7 +31,7 @@ interface GameData {
   status: string;
   time_left: number;
   round_start_time: string;
-  attempts_used: number;
+  attempts_used?: number;
 }
 
 interface LeaderboardEntry {
@@ -311,6 +311,8 @@ const DicoClash = () => {
   };
 
   const subscribeToGame = (gameId: string) => {
+    console.log('🔗 Abonnement au jeu:', gameId);
+
     gameSubscription.current = supabase
       .channel(`game:${gameId}`)
       .on('postgres_changes', {
@@ -319,6 +321,7 @@ const DicoClash = () => {
         table: 'games',
         filter: `id=eq.${gameId}`
       }, (payload: any) => {
+        console.log('🎮 Mise à jour du jeu:', payload);
         if (payload.new) {
           const gameData = payload.new as GameData;
           setCurrentGame(gameData);
@@ -338,20 +341,28 @@ const DicoClash = () => {
         table: 'rounds',
         filter: `game_id=eq.${gameId}`
       }, async (payload: any) => {
+        console.log('📥 Nouveau round reçu:', payload);
+
         if (payload.new) {
           const newRound = payload.new;
+          console.log('🔍 Données du round:', newRound);
 
           if (newRound.clues && newRound.clues.length > 0) {
+            console.log('📝 Indices reçus:', newRound.clues);
             const lastClue = newRound.clues[newRound.clues.length - 1];
 
             const existingAttempt = attempts.find(a => a.clue === lastClue);
             if (!existingAttempt) {
+              console.log('➕ Ajout du nouvel indice:', lastClue);
               setAttempts(prev => [...prev, { clue: lastClue, guess: '', correct: false }]);
               setWaitingForOpponent(false);
+            } else {
+              console.log('⚠️ Indice déjà présent');
             }
           }
 
           if (newRound.guess_word) {
+            console.log('🎯 Réponse reçue:', newRound.guess_word);
             setAttempts(prev => {
               const newAttempts = [...prev];
               const lastAttempt = newAttempts[newAttempts.length - 1];
@@ -363,14 +374,18 @@ const DicoClash = () => {
             });
 
             if (newRound.won) {
+              console.log('✅ Mot trouvé !');
               setTimeout(() => handleNextRound(), 2000);
             } else {
+              console.log('❌ Réponse incorrecte');
               setWaitingForOpponent(false);
             }
           }
         }
       })
-      .subscribe();
+      .subscribe((status) => {
+        console.log('📡 Statut de l\'abonnement rounds:', status);
+      });
   };
 
   const unsubscribeFromGame = () => {
@@ -392,19 +407,24 @@ const DicoClash = () => {
       return;
     }
 
+    console.log('📤 Envoi de l\'indice:', currentClue.trim());
+
     setAttempts(prev => [...prev, { clue: currentClue.trim(), guess: '', correct: false }]);
     setCurrentClue("");
     setWaitingForOpponent(true);
 
     const allClues = [...attempts.map(a => a.clue), currentClue.trim()];
+    console.log('📋 Tous les indices:', allClues);
 
-    await supabase.from('rounds').insert({
+    const { data, error } = await supabase.from('rounds').insert({
       game_id: currentGame.id,
       round_number: currentGame.current_round,
       word: currentGame.current_word,
       giver_id: currentPlayer?.id,
       clues: allClues
-    });
+    }).select();
+
+    console.log('✉️ Résultat insertion indice:', { data, error });
 
     await supabase.from('games').update({
       attempts_used: allClues.length
@@ -416,6 +436,8 @@ const DicoClash = () => {
 
     const guessUpper = currentGuess.trim().toUpperCase();
     const isCorrect = guessUpper === currentGame.current_word;
+
+    console.log('🎯 Envoi de la réponse:', guessUpper, 'Correct:', isCorrect);
 
     setAttempts(prev => {
       const newAttempts = [...prev];
@@ -430,7 +452,7 @@ const DicoClash = () => {
     setCurrentGuess("");
     setWaitingForOpponent(true);
 
-    await supabase.from('rounds').insert({
+    const { data, error } = await supabase.from('rounds').insert({
       game_id: currentGame.id,
       round_number: currentGame.current_round,
       word: currentGame.current_word,
@@ -438,7 +460,9 @@ const DicoClash = () => {
       guess_word: guessUpper,
       won: isCorrect,
       time_taken: 60 - timeLeft
-    });
+    }).select();
+
+    console.log('✉️ Résultat insertion réponse:', { data, error });
 
     if (isCorrect) {
       const isPlayer1 = currentGame.player1_id === currentPlayer?.id;
