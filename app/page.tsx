@@ -289,11 +289,11 @@ const DicoClash = () => {
     setWaitingForOpponent(false);
     setTimeLeft(60);
 
-    // POLLING GAME - Toutes les 500ms
+    // POLLING GAME - 500ms
     gamePollingInterval.current = setInterval(async () => {
       const { data: g } = await supabase.from('games').select('*').eq('id', game.id).single();
       if (g) {
-        console.log('🔍 Game poll - Round:', g.current_round, 'Last:', lastKnownRound.current);
+        console.log('🔍 Poll game - Round:', g.current_round);
 
         if (g.current_round !== lastKnownRound.current) {
           console.log('🎉 ROUND CHANGED!');
@@ -316,7 +316,7 @@ const DicoClash = () => {
       }
     }, 500);
 
-    // POLLING ROUNDS - Toutes les 500ms
+    // POLLING ROUNDS - 500ms
     roundsPollingInterval.current = setInterval(async () => {
       const { data: rounds } = await supabase
         .from('rounds')
@@ -326,10 +326,9 @@ const DicoClash = () => {
         .order('created_at', { ascending: true });
 
       if (rounds && rounds.length > lastRoundsCount.current) {
-        console.log('📥 New rounds data:', rounds.length);
+        console.log('📥 New rounds:', rounds.length);
         lastRoundsCount.current = rounds.length;
 
-        // Rebuild attempts from rounds
         const newAttempts: RoundAttempt[] = [];
 
         for (const round of rounds) {
@@ -347,7 +346,7 @@ const DicoClash = () => {
               lastAttempt.correct = round.won || false;
 
               if (round.won && round.guesser_id !== currentPlayer?.id) {
-                console.log('✅ Opponent found word');
+                console.log('✅ Opponent won');
                 setTimeout(() => triggerNextRound(), 2000);
               }
             }
@@ -475,7 +474,7 @@ const DicoClash = () => {
 
       console.log('✅ Done');
     } else {
-      console.log('👤 P2 wait polling');
+      console.log('👤 P2 wait');
     }
   };
 
@@ -507,67 +506,433 @@ const DicoClash = () => {
 
   if (!mounted) return null;
 
-  // [GARDEZ TOUTE L'UI DU CODE PRÉCÉDENT - Exactement la même]
-  // Login, Home, Queue, Results, Playing - 100% identique
-
   if (gameState === "login") {
-    // ... UI login (code précédent)
-    return <div className="min-h-screen bg-gradient-to-br from-rose-50 via-white to-indigo-50 flex items-center justify-center p-4">
-      <Card className="w-full max-w-md border-2 border-rose-100 shadow-2xl">
-        <CardHeader className="text-center pb-8">
-          <div className="flex items-center justify-center gap-3 mb-4">
-            <div className="p-3 bg-gradient-to-br from-rose-500 to-indigo-600 rounded-2xl shadow-lg">
-              <Swords className="w-10 h-10 text-white" />
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-rose-50 via-white to-indigo-50 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md border-2 border-rose-100 shadow-2xl">
+          <CardHeader className="text-center pb-8">
+            <div className="flex items-center justify-center gap-3 mb-4">
+              <div className="p-3 bg-gradient-to-br from-rose-500 to-indigo-600 rounded-2xl shadow-lg">
+                <Swords className="w-10 h-10 text-white" />
+              </div>
             </div>
-          </div>
-          <CardTitle className="text-4xl font-black bg-gradient-to-r from-rose-600 to-indigo-600 bg-clip-text text-transparent">
-            DicoClash
-          </CardTitle>
-          <p className="text-gray-600 mt-2">Simple. Rapide. Efficace.</p>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium mb-2">Votre pseudo</label>
-            <input
-              type="text"
-              value={pseudoInput}
-              onChange={(e) => setPseudoInput(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
-              placeholder="Votre pseudo..."
-              className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500"
-              maxLength={20}
-              disabled={loading}
-            />
-            {error && <p className="text-sm text-red-600 mt-2">{error}</p>}
-          </div>
-          <Button
-            onClick={handleLogin}
-            disabled={loading || !pseudoInput.trim()}
-            className="w-full bg-gradient-to-r from-rose-600 to-rose-700 text-lg py-6 rounded-xl"
-          >
-            {loading ? (
-              <>
-                <Loader2 className="mr-2 w-5 h-5 animate-spin" />
-                Connexion...
-              </>
-            ) : (
-              <>
-                <LogIn className="mr-2 w-5 h-5" />
-                Jouer
-              </>
-            )}
-          </Button>
-          <p className="text-center text-sm text-gray-500">
-            <Wifi className="inline w-4 h-4 mr-1 text-green-500" />
-            {onlinePlayers} joueurs
-          </p>
-        </CardContent>
-      </Card>
-    </div>;
+            <CardTitle className="text-4xl font-black bg-gradient-to-r from-rose-600 to-indigo-600 bg-clip-text text-transparent">
+              DicoClash
+            </CardTitle>
+            <p className="text-gray-600 mt-2">Polling pur - Simple et fiable</p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-2">Votre pseudo</label>
+              <input
+                type="text"
+                value={pseudoInput}
+                onChange={(e) => setPseudoInput(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
+                placeholder="Votre pseudo..."
+                className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500"
+                maxLength={20}
+                disabled={loading}
+              />
+              {error && <p className="text-sm text-red-600 mt-2">{error}</p>}
+            </div>
+            <Button
+              onClick={handleLogin}
+              disabled={loading || !pseudoInput.trim()}
+              className="w-full bg-gradient-to-r from-rose-600 to-rose-700 text-lg py-6 rounded-xl"
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="mr-2 w-5 h-5 animate-spin" />
+                  Connexion...
+                </>
+              ) : (
+                <>
+                  <LogIn className="mr-2 w-5 h-5" />
+                  Jouer
+                </>
+              )}
+            </Button>
+            <p className="text-center text-sm text-gray-500">
+              <Wifi className="inline w-4 h-4 mr-1 text-green-500" />
+              {onlinePlayers} joueurs
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
-  // Pour home, queue, results, playing : COPIEZ EXACTEMENT le code UI du message précédent
-  // Je ne le répète pas pour économiser l'espace
+  if (gameState === "home") {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-rose-50 via-white to-indigo-50 p-4">
+        <div className="max-w-4xl mx-auto space-y-6">
+          <div className="text-center py-6">
+            <div className="inline-flex items-center gap-3 mb-4">
+              <div className="p-2 bg-gradient-to-br from-rose-500 to-indigo-600 rounded-xl">
+                <Swords className="w-8 h-8 text-white" />
+              </div>
+              <h1 className="text-4xl font-black bg-gradient-to-r from-rose-600 to-indigo-600 bg-clip-text text-transparent">
+                DicoClash
+              </h1>
+            </div>
+            <Badge variant="outline" className="text-base px-4 py-1">
+              <User className="w-4 h-4 mr-2" />
+              {currentPlayer?.pseudo}
+            </Badge>
+          </div>
+
+          <Card className="border-2 border-rose-100 shadow-xl">
+            <CardContent className="p-8 text-center space-y-6">
+              <div>
+                <h2 className="text-3xl font-bold mb-3 bg-gradient-to-r from-rose-600 to-indigo-600 bg-clip-text text-transparent">
+                  Prêt pour le clash ?
+                </h2>
+                <p className="text-gray-600">Jeu temps réel</p>
+              </div>
+              <Button
+                onClick={joinQueue}
+                className="text-xl px-12 py-7 h-auto bg-gradient-to-r from-rose-600 to-rose-700 rounded-xl"
+              >
+                <Zap className="mr-2 w-6 h-6" />
+                Trouver un adversaire
+              </Button>
+              <p className="text-sm text-gray-500">
+                <Wifi className="inline w-4 h-4 mr-1 text-green-500" />
+                {onlinePlayers} joueurs en ligne
+              </p>
+            </CardContent>
+          </Card>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            <Card className="border-2 border-indigo-100">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Trophy className="w-5 h-5 text-yellow-600" />
+                  Stats
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Parties</span>
+                  <span className="font-bold">{currentPlayer?.total_games || 0}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Victoires</span>
+                  <span className="font-bold text-green-600">{currentPlayer?.games_won || 0}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Score</span>
+                  <Badge variant="secondary">{currentPlayer?.score_giver || 1500}</Badge>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border-2 border-rose-100">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Brain className="w-5 h-5 text-rose-600" />
+                  Règles
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                <p>🎯 1v1 temps réel</p>
+                <p>🔄 4 tentatives max</p>
+                <p>⏱️ 60 secondes/round</p>
+                <p>🏆 4 rounds</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="border-2 border-yellow-100">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Crown className="w-5 h-5 text-yellow-600" />
+                Top 10
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {leaderboard.length === 0 ? (
+                <p className="text-center text-gray-500 py-4">Chargement...</p>
+              ) : (
+                <div className="space-y-2">
+                  {leaderboard.map((p) => (
+                    <div key={p.id} className={`flex justify-between p-3 rounded-lg border ${
+                      p.id === currentPlayer?.id ? 'bg-rose-50 border-rose-200' : 'bg-gray-50'
+                    }`}>
+                      <div className="flex items-center gap-3">
+                        {getRankBadge(p.rank)}
+                        <span className="font-bold">#{p.rank}</span>
+                        <span>{p.pseudo}</span>
+                      </div>
+                      <b>{Math.round(p.score_average)}</b>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <div className="text-center">
+            <Button variant="outline" onClick={() => {
+              stopHeartbeat();
+              setCurrentPlayer(null);
+              setGameState("login");
+            }}>
+              Changer
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (gameState === "queue") {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-rose-50 via-white to-indigo-50 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md border-2 border-rose-100">
+          <CardContent className="p-8 text-center space-y-6">
+            <div className="w-20 h-20 bg-rose-100 rounded-full flex items-center justify-center mx-auto">
+              <Users className="w-10 h-10 text-rose-600 animate-pulse" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold">Recherche...</h2>
+              <p className="text-gray-600">En attente</p>
+            </div>
+            <Progress value={(queueTime % 3) * 33} />
+            <p className="text-sm text-gray-500">{queueTime}s</p>
+            <Button variant="outline" onClick={() => {
+              leaveQueue();
+              if (matchmakingInterval.current) clearInterval(matchmakingInterval.current);
+              setGameState("home");
+            }}>
+              Annuler
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (gameState === "results") {
+    if (!currentGame) return null;
+    const isP1 = currentGame.player1_id === currentPlayer?.id;
+    const pScore = isP1 ? currentGame.player1_score : currentGame.player2_score;
+    const oScore = isP1 ? currentGame.player2_score : currentGame.player1_score;
+    const won = pScore > oScore;
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-rose-50 via-white to-indigo-50 flex items-center justify-center p-4">
+        <Card className="w-full max-w-2xl border-2 border-rose-100">
+          <CardContent className="p-8 space-y-6">
+            <div className="text-center">
+              {won ? (
+                <div className="w-24 h-24 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Trophy className="w-12 h-12 text-yellow-600" />
+                </div>
+              ) : (
+                <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Star className="w-12 h-12 text-gray-400" />
+                </div>
+              )}
+              <h2 className="text-4xl font-bold">
+                {pScore === oScore ? "Nul !" : won ? "Victoire !" : "Défaite"}
+              </h2>
+            </div>
+
+            <div className="flex justify-center gap-16 py-8">
+              <div className="text-center">
+                <p className="text-sm mb-2">{currentPlayer?.pseudo}</p>
+                <p className="text-6xl font-bold text-indigo-600">{pScore}</p>
+              </div>
+              <div className="text-6xl text-gray-300">-</div>
+              <div className="text-center">
+                <p className="text-sm mb-2">{opponentPseudo}</p>
+                <p className="text-6xl font-bold text-rose-600">{oScore}</p>
+              </div>
+            </div>
+
+            <Button onClick={() => {
+              setCurrentGame(null);
+              setGameState("home");
+            }} className="w-full bg-gradient-to-r from-rose-600 to-rose-700">
+              <Zap className="mr-2" /> Rejouer
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (gameState === "playing" && currentGame) {
+    const isGiver = currentGame.current_giver_id === currentPlayer?.id;
+    const isP1 = currentGame.player1_id === currentPlayer?.id;
+    const pScore = isP1 ? currentGame.player1_score : currentGame.player2_score;
+    const oScore = isP1 ? currentGame.player2_score : currentGame.player1_score;
+    const attemptsLeft = 4 - attempts.length;
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-rose-50 via-white to-indigo-50 p-4">
+        <div className="max-w-5xl mx-auto space-y-4">
+          <Card className="border-2 border-rose-100">
+            <CardContent className="p-4">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h2 className="text-2xl font-bold">Round {currentGame.current_round}/4</h2>
+                  <Badge variant={isGiver ? "default" : "secondary"} className={isGiver ? "bg-rose-600 mt-1" : "mt-1"}>
+                    {isGiver ? "🎯 Donneur" : "🔍 Devineur"}
+                  </Badge>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm">vs {opponentPseudo}</p>
+                  <p className="text-2xl font-bold">
+                    <span className="text-indigo-600">{pScore}</span> - <span className="text-rose-600">{oScore}</span>
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="grid grid-cols-2 gap-4">
+            <Card className="border-2 border-rose-100">
+              <CardContent className="p-4">
+                <div className="flex justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-5 h-5" />
+                    <span className="font-semibold">Temps</span>
+                  </div>
+                  <span className={`text-3xl font-bold ${timeLeft > 30 ? 'text-green-600' : timeLeft > 10 ? 'text-yellow-600' : 'text-red-600'}`}>
+                    {timeLeft}s
+                  </span>
+                </div>
+                <Progress value={(timeLeft / 60) * 100} className="h-3" />
+              </CardContent>
+            </Card>
+
+            <Card className="border-2 border-indigo-100">
+              <CardContent className="p-4">
+                <div className="flex justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <Target className="w-5 h-5" />
+                    <span className="font-semibold">Tentatives</span>
+                  </div>
+                  <span className={`text-3xl font-bold ${attemptsLeft > 2 ? 'text-green-600' : attemptsLeft > 1 ? 'text-yellow-600' : 'text-red-600'}`}>
+                    {attemptsLeft}/4
+                  </span>
+                </div>
+                <Progress value={(attempts.length / 4) * 100} className="h-3" />
+              </CardContent>
+            </Card>
+          </div>
+
+          {isGiver && (
+            <Card className="border-2 border-rose-100">
+              <CardHeader>
+                <CardTitle className="text-center">Votre mot</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-center py-12">
+                  <div className="inline-block bg-gradient-to-r from-rose-600 to-indigo-600 text-white px-12 py-6 rounded-2xl text-5xl font-black">
+                    {currentGame.current_word}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          <Card className="border-2 border-gray-100">
+            <CardHeader>
+              <CardTitle>Historique</CardTitle>
+              <CardDescription>{attemptsLeft} tentative(s) restante(s)</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {attempts.length === 0 && (
+                <div className="text-center py-8 text-gray-500">
+                  {isGiver ? "Donnez le premier indice" : `En attente de ${opponentPseudo}...`}
+                </div>
+              )}
+
+              {attempts.map((att, i) => (
+                <div key={i} className="border-2 rounded-xl p-4 bg-gray-50">
+                  <div className="flex gap-3 mb-2">
+                    <Badge className={isGiver ? "bg-indigo-600" : "bg-rose-600"}>#{i + 1}</Badge>
+                    <div className="flex-1">
+                      <p className="text-sm text-gray-600">Indice :</p>
+                      <p className="font-bold text-lg">{att.clue}</p>
+                    </div>
+                  </div>
+                  {att.guess && (
+                    <div className="flex gap-3 mt-3 pt-3 border-t">
+                      <Badge variant={att.correct ? "default" : "destructive"} className={att.correct ? "bg-green-600" : ""}>
+                        {att.correct ? "✓" : "✗"}
+                      </Badge>
+                      <p><b>{att.guess}</b></p>
+                    </div>
+                  )}
+                  {!att.guess && <p className="text-sm text-gray-500 italic mt-2 pt-2 border-t">En attente...</p>}
+                </div>
+              ))}
+
+              {isGiver && attemptsLeft > 0 && !waitingForOpponent && (
+                (attempts.length === 0 || (attempts[attempts.length - 1].guess && !attempts[attempts.length - 1].correct)) && (
+                  <Card className="border-2 border-rose-100 bg-rose-50">
+                    <CardContent className="p-4">
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={currentClue}
+                          onChange={(e) => setCurrentClue(e.target.value)}
+                          onKeyPress={(e) => e.key === 'Enter' && sendClue()}
+                          placeholder="Votre indice..."
+                          className="flex-1 px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500"
+                          maxLength={50}
+                          autoFocus
+                        />
+                        <Button onClick={sendClue} disabled={!currentClue.trim()} className="bg-rose-600 px-6">
+                          <Send className="w-5 h-5" />
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )
+              )}
+
+              {!isGiver && attempts.length > 0 && !attempts[attempts.length - 1].guess && !waitingForOpponent && (
+                <Card className="border-2 border-indigo-100 bg-indigo-50">
+                  <CardHeader>
+                    <CardTitle>À vous !</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <input
+                      type="text"
+                      value={currentGuess}
+                      onChange={(e) => setCurrentGuess(e.target.value.toUpperCase())}
+                      onKeyPress={(e) => e.key === 'Enter' && submitGuess()}
+                      placeholder="RÉPONSE..."
+                      className="w-full px-4 py-4 border-2 rounded-xl text-center font-black text-2xl uppercase focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      maxLength={30}
+                      autoFocus
+                    />
+                    <Button onClick={submitGuess} disabled={!currentGuess.trim()} className="w-full bg-indigo-600 py-4">
+                      <Send className="mr-2" />
+                      Valider
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+
+              {waitingForOpponent && (
+                <div className="text-center py-6">
+                  <Loader2 className="w-6 h-6 mx-auto mb-2 animate-spin" />
+                  <p className="text-gray-600">En attente de {opponentPseudo}...</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   return null;
 };
