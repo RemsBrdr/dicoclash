@@ -8,7 +8,7 @@ import { Progress } from "@/components/ui/progress";
 import { Trophy, Clock, User, Zap, Crown, Star, Send, Swords, LogIn, Users, Wifi, Target, Brain, Sparkles, Timer, MessageSquare, AlertCircle } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
-type GameState = "login" | "home" | "queue" | "playing" | "waiting" | "results";
+type GameState = "login" | "home" | "queue" | "playing" | "results";
 
 interface Player {
   id: string;
@@ -66,13 +66,14 @@ const DicoClash = () => {
   const [error, setError] = useState<string | null>(null);
   const [queueTime, setQueueTime] = useState(0);
   const [timeLeft, setTimeLeft] = useState(60);
-  const [isTransitioning, setIsTransitioning] = useState(false);
+  const [showTransition, setShowTransition] = useState(false);
 
   const heartbeatInterval = useRef<NodeJS.Timeout | null>(null);
   const gameSubscription = useRef<any>(null);
   const roundsSubscription = useRef<any>(null);
   const matchmakingInterval = useRef<NodeJS.Timeout | null>(null);
   const lastProcessedRound = useRef(0);
+  const isProcessingNextRound = useRef(false);
 
   useEffect(() => {
     setMounted(true);
@@ -109,7 +110,7 @@ const DicoClash = () => {
   }, [gameState]);
 
   useEffect(() => {
-    if (gameState === "playing" && timeLeft > 0 && !isTransitioning) {
+    if (gameState === "playing" && timeLeft > 0 && !showTransition) {
       const interval = setInterval(() => {
         setTimeLeft(prev => {
           if (prev <= 1) {
@@ -121,7 +122,7 @@ const DicoClash = () => {
       }, 1000);
       return () => clearInterval(interval);
     }
-  }, [gameState, timeLeft, isTransitioning]);
+  }, [gameState, timeLeft, showTransition]);
 
   const startHeartbeat = async () => {
     if (!currentPlayer) return;
@@ -244,18 +245,7 @@ const DicoClash = () => {
 
           if (opponent) setOpponentPseudo(opponent.pseudo);
 
-          setCurrentGame(existingGame);
-          setTimeLeft(60);
-          setAttempts([]);
-          setWaitingForOpponent(false);
-          setIsTransitioning(false);
-          lastProcessedRound.current = existingGame.current_round;
-
-          setTimeout(() => {
-            subscribeToGame(existingGame.id);
-            setGameState("playing");
-          }, 500);
-
+          initializeGame(existingGame);
           return;
         }
 
@@ -285,17 +275,7 @@ const DicoClash = () => {
               .single();
 
             if (game) {
-              setCurrentGame(game);
-              setTimeLeft(60);
-              setAttempts([]);
-              setWaitingForOpponent(false);
-              setIsTransitioning(false);
-              lastProcessedRound.current = game.current_round;
-
-              setTimeout(() => {
-                subscribeToGame(match.game_id);
-                setGameState("playing");
-              }, 500);
+              initializeGame(game);
             }
           }
         }
@@ -323,9 +303,25 @@ const DicoClash = () => {
     await supabase.from('queue').delete().eq('player_id', currentPlayer.id);
   };
 
-  const subscribeToGame = (gameId: string) => {
-    console.log('🔗 Abonnement au jeu:', gameId);
+  const initializeGame = (game: GameData) => {
+    console.log('🎮 Initialisation jeu:', game.id, 'Round:', game.current_round);
 
+    setCurrentGame(game);
+    setTimeLeft(60);
+    setAttempts([]);
+    setWaitingForOpponent(false);
+    setShowTransition(false);
+    lastProcessedRound.current = game.current_round;
+    isProcessingNextRound.current = false;
+
+    subscribeToGame(game.id);
+    setGameState("playing");
+  };
+
+  const subscribeToGame = (gameId: string) => {
+    console.log('🔗 Subscribe game:', gameId);
+
+    // Subscription aux changements du jeu
     gameSubscription.current = supabase
       .channel(`game:${gameId}:${Date.now()}`)
       .on('postgres_changes', {
@@ -334,35 +330,43 @@ const DicoClash = () => {
         table: 'games',
         filter: `id=eq.${gameId}`
       }, (payload: any) => {
-        console.log('🎮 UPDATE reçu:', payload);
+        console.log('📩 Game UPDATE:', payload.new);
+
         if (payload.new) {
           const gameData = payload.new as GameData;
 
+          // Détection changement de round
           if (gameData.current_round !== lastProcessedRound.current) {
-            console.log('🔄 NOUVEAU ROUND:', gameData.current_round, 'État:', gameState);
-            lastProcessedRound.current = gameData.current_round;
+            console.log('🔄 Round change:', lastProcessedRound.current, '→', gameData.current_round);
 
+            lastProcessedRound.current = gameData.current_round;
+            isProcessingNextRound.current = false;
+
+            // Reset UI immédiat
             setAttempts([]);
             setCurrentClue("");
             setCurrentGuess("");
             setWaitingForOpponent(false);
             setTimeLeft(60);
-            setIsTransitioning(false);
+            setShowTransition(false);
 
-            console.log('✅ FORCER gameState = playing');
-            setGameState("playing");
+            console.log('✅ UI reset pour round', gameData.current_round);
           }
 
           setCurrentGame(gameData);
 
+          // Fin de partie
           if (gameData.status === 'finished') {
-            console.log('🏁 Partie terminée');
+            console.log('🏁 Partie finie');
             handleGameEnd(gameData);
           }
         }
       })
-      .subscribe();
+      .subscribe((status) => {
+        console.log('📡 Game subscription:', status);
+      });
 
+    // Subscription aux rounds (indices/réponses)
     roundsSubscription.current = supabase
       .channel(`rounds:${gameId}:${Date.now()}`)
       .on('postgres_changes', {
@@ -370,49 +374,52 @@ const DicoClash = () => {
         schema: 'public',
         table: 'rounds',
         filter: `game_id=eq.${gameId}`
-      }, async (payload: any) => {
+      }, (payload: any) => {
+        console.log('📩 Round INSERT:', payload.new);
+
         if (payload.new) {
           const newRound = payload.new;
 
-          if (newRound.clues && newRound.clues.length > 0 && newRound.giver_id) {
-            if (newRound.giver_id !== currentPlayer?.id) {
-              const lastClue = newRound.clues[newRound.clues.length - 1];
+          // Indice reçu
+          if (newRound.clues && newRound.clues.length > 0 && newRound.giver_id !== currentPlayer?.id) {
+            const lastClue = newRound.clues[newRound.clues.length - 1];
+            console.log('💬 Indice reçu:', lastClue);
 
-              setAttempts(prev => {
-                const exists = prev.some(a => a.clue === lastClue);
-                if (exists) return prev;
-                return [...prev, { clue: lastClue, guess: '', correct: false }];
-              });
+            setAttempts(prev => {
+              if (prev.some(a => a.clue === lastClue)) return prev;
+              return [...prev, { clue: lastClue, guess: '', correct: false }];
+            });
 
-              setWaitingForOpponent(false);
-            }
+            setWaitingForOpponent(false);
           }
 
-          if (newRound.guess_word && newRound.guesser_id) {
-            if (newRound.guesser_id !== currentPlayer?.id) {
-              setAttempts(prev => {
-                const newAttempts = [...prev];
-                const lastAttempt = newAttempts[newAttempts.length - 1];
+          // Réponse reçue
+          if (newRound.guess_word && newRound.guesser_id !== currentPlayer?.id) {
+            console.log('🎯 Réponse reçue:', newRound.guess_word, 'Correct:', newRound.won);
 
-                if (lastAttempt && !lastAttempt.guess) {
-                  lastAttempt.guess = newRound.guess_word;
-                  lastAttempt.correct = newRound.won || false;
-                }
-
-                return newAttempts;
-              });
-
-              if (newRound.won) {
-                setIsTransitioning(true);
-                setTimeout(() => handleNextRound(), 2000);
-              } else {
-                setWaitingForOpponent(false);
+            setAttempts(prev => {
+              const updated = [...prev];
+              const lastAttempt = updated[updated.length - 1];
+              if (lastAttempt && !lastAttempt.guess) {
+                lastAttempt.guess = newRound.guess_word;
+                lastAttempt.correct = newRound.won || false;
               }
+              return updated;
+            });
+
+            if (newRound.won) {
+              console.log('✅ Mot trouvé, next round dans 2s');
+              setShowTransition(true);
+              setTimeout(() => triggerNextRound(), 2000);
+            } else {
+              setWaitingForOpponent(false);
             }
           }
         }
       })
-      .subscribe();
+      .subscribe((status) => {
+        console.log('📡 Rounds subscription:', status);
+      });
   };
 
   const unsubscribeFromGame = () => {
@@ -434,6 +441,9 @@ const DicoClash = () => {
       return;
     }
 
+    console.log('📤 Envoi indice:', currentClue.trim());
+
+    // Optimistic update
     setAttempts(prev => [...prev, { clue: currentClue.trim(), guess: '', correct: false }]);
     setCurrentClue("");
     setWaitingForOpponent(true);
@@ -459,14 +469,17 @@ const DicoClash = () => {
     const guessUpper = currentGuess.trim().toUpperCase();
     const isCorrect = guessUpper === currentGame.current_word;
 
+    console.log('📤 Envoi réponse:', guessUpper, 'Correct:', isCorrect);
+
+    // Optimistic update
     setAttempts(prev => {
-      const newAttempts = [...prev];
-      const lastAttempt = newAttempts[newAttempts.length - 1];
+      const updated = [...prev];
+      const lastAttempt = updated[updated.length - 1];
       if (lastAttempt) {
         lastAttempt.guess = guessUpper;
         lastAttempt.correct = isCorrect;
       }
-      return newAttempts;
+      return updated;
     });
 
     setCurrentGuess("");
@@ -485,53 +498,72 @@ const DicoClash = () => {
     if (isCorrect) {
       const isPlayer1 = currentGame.player1_id === currentPlayer?.id;
       await supabase.from('games').update({
-        [isPlayer1 ? 'player1_score' : 'player2_score']: isPlayer1 ? currentGame.player1_score + 1 : currentGame.player2_score + 1
+        [isPlayer1 ? 'player1_score' : 'player2_score']:
+          isPlayer1 ? currentGame.player1_score + 1 : currentGame.player2_score + 1
       }).eq('id', currentGame.id);
 
-      setIsTransitioning(true);
-      setTimeout(() => handleNextRound(), 2000);
+      console.log('✅ Mot trouvé par moi, next round dans 2s');
+      setShowTransition(true);
+      setTimeout(() => triggerNextRound(), 2000);
     } else if (attempts.length >= 4) {
-      setIsTransitioning(true);
-      setTimeout(() => handleNextRound(), 2000);
+      console.log('❌ 4 tentatives, next round dans 2s');
+      setShowTransition(true);
+      setTimeout(() => triggerNextRound(), 2000);
     } else {
       setWaitingForOpponent(false);
     }
   };
 
   const handleTimeOut = () => {
-    setIsTransitioning(true);
-    handleNextRound();
+    console.log('⏱️ Timeout');
+    setShowTransition(true);
+    triggerNextRound();
   };
 
-  const handleNextRound = async () => {
-    if (!currentGame) return;
+  const triggerNextRound = async () => {
+    if (!currentGame || isProcessingNextRound.current) {
+      console.log('⚠️ Already processing ou pas de game');
+      return;
+    }
 
+    isProcessingNextRound.current = true;
+    console.log('🔄 Trigger next round, current:', currentGame.current_round);
+
+    // Fin de partie ?
     if (currentGame.current_round >= 4) {
+      console.log('🏁 Partie terminée');
       await supabase.from('games').update({
         status: 'finished'
       }).eq('id', currentGame.id);
       return;
     }
 
+    // Seulement Player1 update la BDD
     const isPlayer1 = currentGame.player1_id === currentPlayer?.id;
 
     if (isPlayer1) {
-      setTimeout(async () => {
-        const nextRound = currentGame.current_round + 1;
-        const { data: word } = await supabase.rpc('get_random_word');
-        const newGiverId = currentGame.current_giver_id === currentGame.player1_id
-          ? currentGame.player2_id
-          : currentGame.player1_id;
+      console.log('👑 Player1 update BDD');
 
-        await supabase.from('games').update({
-          current_round: nextRound,
-          current_word: word || 'ELEPHANT',
-          current_giver_id: newGiverId,
-          time_left: 60,
-          attempts_used: 0,
-          round_start_time: new Date().toISOString()
-        }).eq('id', currentGame.id);
-      }, 3000);
+      const nextRound = currentGame.current_round + 1;
+      const { data: word } = await supabase.rpc('get_random_word');
+      const newGiverId = currentGame.current_giver_id === currentGame.player1_id
+        ? currentGame.player2_id
+        : currentGame.player1_id;
+
+      console.log('📝 UPDATE: round', nextRound, 'mot:', word);
+
+      await supabase.from('games').update({
+        current_round: nextRound,
+        current_word: word || 'ELEPHANT',
+        current_giver_id: newGiverId,
+        time_left: 60,
+        attempts_used: 0,
+        round_start_time: new Date().toISOString()
+      }).eq('id', currentGame.id);
+
+      console.log('✅ BDD updated');
+    } else {
+      console.log('👤 Player2 attend subscription');
     }
   };
 
@@ -565,97 +597,36 @@ const DicoClash = () => {
 
   if (!mounted) return null;
 
+  // [UI COMPONENTS - Je garde juste le strict nécessaire pour tester]
+
   if (gameState === "login") {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-blue-50">
-        <div className="border-b bg-white shadow-sm">
-          <div className="max-w-7xl mx-auto px-4 py-4 sm:py-6">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-gradient-to-br from-red-500 to-blue-600 rounded-xl">
-                  <Swords className="w-6 h-6 sm:w-8 sm:h-8 text-white" />
-                </div>
-                <h1 className="text-2xl sm:text-4xl font-bold bg-gradient-to-r from-red-600 to-blue-600 bg-clip-text text-transparent">
-                  DicoClash
-                </h1>
-              </div>
-              <div className="flex items-center gap-2 text-xs sm:text-sm text-gray-600">
-                <Wifi className="w-3 h-3 sm:w-4 sm:h-4 text-green-500" />
-                <span className="hidden sm:inline">{onlinePlayers} joueurs en ligne</span>
-                <span className="sm:hidden">{onlinePlayers}</span>
-              </div>
+      <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-blue-50 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md">
+          <CardContent className="p-6">
+            <h1 className="text-3xl font-bold text-center mb-6">DicoClash</h1>
+            <div className="space-y-4">
+              <input
+                type="text"
+                value={pseudoInput}
+                onChange={(e) => setPseudoInput(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
+                placeholder="Votre pseudo..."
+                className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg"
+                maxLength={20}
+                disabled={loading}
+              />
+              {error && <p className="text-sm text-red-600">{error}</p>}
+              <Button
+                onClick={handleLogin}
+                disabled={loading || !pseudoInput.trim()}
+                className="w-full"
+              >
+                {loading ? "Connexion..." : "Jouer"}
+              </Button>
             </div>
-          </div>
-        </div>
-
-        <div className="max-w-7xl mx-auto px-4 py-6 sm:py-12">
-          <div className="text-center mb-8 sm:mb-12">
-            <div className="flex items-center justify-center gap-2 mb-4">
-              <Sparkles className="w-5 h-5 sm:w-6 sm:h-6 text-yellow-500" />
-              <Badge variant="outline" className="text-xs sm:text-sm">
-                Jeu multijoueur en temps réel
-              </Badge>
-            </div>
-            <h2 className="text-3xl sm:text-5xl lg:text-6xl font-bold mb-4 sm:mb-6">
-              <span className="bg-gradient-to-r from-red-600 via-pink-600 to-blue-600 bg-clip-text text-transparent">
-                60 secondes.
-              </span>
-              <br />
-              <span className="bg-gradient-to-r from-blue-600 via-purple-600 to-red-600 bg-clip-text text-transparent">
-                4 tentatives. 1 champion.
-              </span>
-            </h2>
-            <p className="text-base sm:text-xl text-gray-600 mb-8 max-w-2xl mx-auto px-4">
-              Affrontez des adversaires du monde entier dans des duels de vocabulaire explosifs !
-            </p>
-
-            <Card className="max-w-md mx-auto border-2 border-red-100 shadow-lg">
-              <CardContent className="p-4 sm:p-6">
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-left">
-                      Choisissez votre pseudo
-                    </label>
-                    <input
-                      type="text"
-                      value={pseudoInput}
-                      onChange={(e) => setPseudoInput(e.target.value)}
-                      onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
-                      placeholder="Votre pseudo..."
-                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 text-base"
-                      maxLength={20}
-                      disabled={loading}
-                    />
-                    {error && <p className="text-sm text-red-600 mt-2 text-left">{error}</p>}
-                  </div>
-
-                  <Button
-                    onClick={handleLogin}
-                    disabled={loading || !pseudoInput.trim()}
-                    className="w-full bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-base sm:text-lg py-5 sm:py-6"
-                  >
-                    {loading ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-                        Connexion...
-                      </>
-                    ) : (
-                      <>
-                        <LogIn className="mr-2 w-5 h-5" />
-                        Entrer dans l'arène
-                      </>
-                    )}
-                  </Button>
-
-                  <p className="text-xs sm:text-sm text-gray-500 text-center">
-                    <Users className="inline w-3 h-3 sm:w-4 sm:h-4 mr-1" />
-                    Aucun compte requis, juste un pseudo !
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       </div>
     );
   }
@@ -663,155 +634,24 @@ const DicoClash = () => {
   if (gameState === "home") {
     return (
       <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-blue-50 p-4">
-        <div className="max-w-6xl mx-auto">
-          <div className="text-center py-8">
-            <div className="flex items-center justify-center gap-3 mb-4">
-              <Swords className="w-12 h-12 text-red-600" />
-              <h1 className="text-5xl font-bold bg-gradient-to-r from-red-600 to-blue-600 bg-clip-text text-transparent">
-                DicoClash
-              </h1>
-            </div>
-            <p className="text-gray-700 text-xl font-semibold mb-2">
-              60 secondes. 4 tentatives. 1 champion.
-            </p>
-            <Badge variant="outline" className="text-base">
-              <User className="w-4 h-4 mr-2" />
-              {currentPlayer?.pseudo}
-            </Badge>
-          </div>
-
-          <div className="grid md:grid-cols-2 gap-6 mb-8">
-            <Card className="md:col-span-2 border-2 border-red-100">
-              <CardContent className="p-8">
-                <div className="text-center space-y-6">
-                  <div>
-                    <h2 className="text-3xl font-bold mb-3">Prêt pour le clash ?</h2>
-                    <p className="text-gray-600 mb-6">
-                      Affrontez des adversaires réels en temps réel
-                    </p>
-                  </div>
-
-                  <Button
-                    onClick={joinQueue}
-                    className="text-xl px-12 py-6 h-auto bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800"
-                  >
-                    <Zap className="mr-2 w-6 h-6" />
-                    Trouver un adversaire
-                  </Button>
-
-                  <div className="flex items-center justify-center gap-2 text-sm text-gray-500">
-                    <Wifi className="w-4 h-4 text-green-500" />
-                    <span>{onlinePlayers} joueurs en ligne</span>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Trophy className="w-5 h-5 text-yellow-600" />
-                  Vos statistiques
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Parties jouées</span>
-                  <span className="font-bold">{currentPlayer?.total_games || 0}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Victoires</span>
-                  <span className="font-bold text-green-600">{currentPlayer?.games_won || 0}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Score Donneur</span>
-                  <Badge variant="secondary">{currentPlayer?.score_giver || 1500}</Badge>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Score Devineur</span>
-                  <Badge variant="secondary">{currentPlayer?.score_guesser || 1500}</Badge>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Swords className="w-5 h-5 text-red-600" />
-                  Comment jouer
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2 text-sm text-gray-700">
-                <p>⚔️ Matchs en 1 vs 1 contre de vrais joueurs</p>
-                <p>🏓 Système ping-pong : 4 tentatives maximum</p>
-                <p>⏱️ 60 secondes et 4 aller-retours max</p>
-                <p>🏆 Gagnez des points ELO à chaque victoire</p>
-              </CardContent>
-            </Card>
-          </div>
-
+        <div className="max-w-2xl mx-auto space-y-4">
           <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Crown className="w-5 h-5 text-yellow-600" />
-                Classement des Champions
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {leaderboard.length === 0 ? (
-                  <p className="text-center text-gray-500 py-4">Chargement...</p>
-                ) : (
-                  leaderboard.map((player) => (
-                    <div
-                      key={player.id}
-                      className={`flex items-center justify-between p-3 rounded-lg border ${
-                        player.id === currentPlayer?.id
-                          ? 'bg-red-50 border-red-200'
-                          : 'bg-gradient-to-r from-gray-50 to-transparent border-gray-100'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="flex items-center gap-2">
-                          {getRankBadge(player.rank)}
-                          <span className="font-bold text-gray-700">#{player.rank}</span>
-                        </div>
-                        <span className="font-medium">
-                          {player.pseudo}
-                          {player.id === currentPlayer?.id && (
-                            <Badge variant="outline" className="ml-2 text-xs">Vous</Badge>
-                          )}
-                        </span>
-                      </div>
-                      <div className="flex gap-4 text-sm">
-                        <div className="text-center">
-                          <p className="text-xs text-gray-500">Score</p>
-                          <p className="font-bold">{Math.round(player.score_average)}</p>
-                        </div>
-                        <div className="text-center">
-                          <p className="text-xs text-gray-500">Victoires</p>
-                          <p className="font-bold text-green-600">{player.games_won}</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
+            <CardContent className="p-6 text-center">
+              <h2 className="text-2xl font-bold mb-4">Bienvenue {currentPlayer?.pseudo}</h2>
+              <Button onClick={joinQueue} size="lg">
+                Trouver un adversaire
+              </Button>
+              <p className="mt-4 text-sm text-gray-600">{onlinePlayers} joueurs en ligne</p>
             </CardContent>
           </Card>
 
-          <div className="mt-6 text-center">
-            <Button
-              variant="outline"
-              onClick={() => {
-                stopHeartbeat();
-                setCurrentPlayer(null);
-                setGameState("login");
-              }}
-            >
-              Changer de pseudo
-            </Button>
-          </div>
+          <Card>
+            <CardHeader><CardTitle>Statistiques</CardTitle></CardHeader>
+            <CardContent>
+              <p>Parties: {currentPlayer?.total_games || 0}</p>
+              <p>Victoires: {currentPlayer?.games_won || 0}</p>
+            </CardContent>
+          </Card>
         </div>
       </div>
     );
@@ -820,67 +660,17 @@ const DicoClash = () => {
   if (gameState === "queue") {
     return (
       <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-blue-50 flex items-center justify-center p-4">
-        <Card className="w-full max-w-md border-2 border-red-100">
-          <CardContent className="p-8 text-center space-y-6">
-            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto">
-              <Users className="w-8 h-8 text-red-600 animate-pulse" />
-            </div>
-            <div>
-              <h2 className="text-2xl font-bold mb-2">Recherche d'adversaire...</h2>
-              <p className="text-gray-600">Un vrai joueur va vous rejoindre</p>
-            </div>
-            <div className="space-y-2">
-              <Progress value={(queueTime % 3) * 33} className="h-2" />
-              <p className="text-sm text-gray-500">{queueTime}s écoulées</p>
-              <p className="text-xs text-gray-400">
-                <Wifi className="inline w-3 h-3 mr-1" />
-                {onlinePlayers} joueurs en ligne
-              </p>
-            </div>
-            <Button
-              variant="outline"
-              onClick={() => {
-                leaveQueue();
-                if (matchmakingInterval.current) {
-                  clearInterval(matchmakingInterval.current);
-                }
-                setGameState("home");
-              }}
-            >
+        <Card>
+          <CardContent className="p-8 text-center">
+            <h2 className="text-2xl font-bold mb-4">Recherche d'adversaire...</h2>
+            <p>{queueTime}s</p>
+            <Button variant="outline" onClick={() => {
+              leaveQueue();
+              if (matchmakingInterval.current) clearInterval(matchmakingInterval.current);
+              setGameState("home");
+            }} className="mt-4">
               Annuler
             </Button>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
-  if (gameState === "waiting") {
-    if (!currentGame) return null;
-
-    const isPlayer1 = currentGame.player1_id === currentPlayer?.id;
-    const playerScore = isPlayer1 ? currentGame.player1_score : currentGame.player2_score;
-    const opponentScore = isPlayer1 ? currentGame.player2_score : currentGame.player1_score;
-
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-blue-50 flex items-center justify-center p-4">
-        <Card className="w-full max-w-md border-2 border-red-100">
-          <CardContent className="p-8 text-center space-y-6">
-            <h2 className="text-2xl font-bold">Prochain round...</h2>
-            <div className="text-4xl font-bold text-red-600">
-              Round {currentGame.current_round + 1}/4
-            </div>
-            <div className="flex justify-center gap-8">
-              <div className="text-center">
-                <p className="text-sm text-gray-600 mb-1">{currentPlayer?.pseudo}</p>
-                <p className="text-3xl font-bold text-blue-600">{playerScore}</p>
-              </div>
-              <div className="text-4xl text-gray-300">-</div>
-              <div className="text-center">
-                <p className="text-sm text-gray-600 mb-1">{opponentPseudo}</p>
-                <p className="text-3xl font-bold text-red-600">{opponentScore}</p>
-              </div>
-            </div>
           </CardContent>
         </Card>
       </div>
@@ -897,60 +687,28 @@ const DicoClash = () => {
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-blue-50 flex items-center justify-center p-4">
-        <Card className="w-full max-w-2xl border-2 border-red-100">
-          <CardContent className="p-8 space-y-6">
-            <div className="text-center">
-              {isWinner ? (
-                <div className="w-20 h-20 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Trophy className="w-10 h-10 text-yellow-600" />
-                </div>
-              ) : (
-                <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Star className="w-10 h-10 text-gray-400" />
-                </div>
-              )}
-              <h2 className="text-3xl font-bold mb-2">
-                {playerScore === opponentScore ? "Match nul !" : isWinner ? "Victoire !" : "Défaite"}
-              </h2>
-              <p className="text-gray-600">Partie terminée</p>
-            </div>
-
-            <div className="flex justify-center gap-12 py-6">
-              <div className="text-center">
-                <p className="text-sm text-gray-600 mb-2">{currentPlayer?.pseudo}</p>
-                <p className="text-5xl font-bold text-blue-600">{playerScore}</p>
+        <Card className="w-full max-w-md">
+          <CardContent className="p-8 text-center space-y-6">
+            <h2 className="text-3xl font-bold">
+              {playerScore === opponentScore ? "Match nul !" : isWinner ? "Victoire !" : "Défaite"}
+            </h2>
+            <div className="flex justify-center gap-8">
+              <div>
+                <p className="text-sm">{currentPlayer?.pseudo}</p>
+                <p className="text-4xl font-bold">{playerScore}</p>
               </div>
-              <div className="text-5xl text-gray-300 self-center">-</div>
-              <div className="text-center">
-                <p className="text-sm text-gray-600 mb-2">{opponentPseudo}</p>
-                <p className="text-5xl font-bold text-red-600">{opponentScore}</p>
+              <div className="text-3xl">-</div>
+              <div>
+                <p className="text-sm">{opponentPseudo}</p>
+                <p className="text-4xl font-bold">{opponentScore}</p>
               </div>
             </div>
-
-            <div className="flex gap-3">
-              <Button
-                onClick={() => {
-                  setCurrentGame(null);
-                  setGameState("home");
-                  loadLeaderboard();
-                }}
-                className="flex-1 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800"
-              >
-                <Zap className="mr-2 w-4 h-4" />
-                Nouveau Match
-              </Button>
-              <Button
-                onClick={() => {
-                  setCurrentGame(null);
-                  setGameState("home");
-                  loadLeaderboard();
-                }}
-                variant="outline"
-                className="flex-1"
-              >
-                Accueil
-              </Button>
-            </div>
+            <Button onClick={() => {
+              setCurrentGame(null);
+              setGameState("home");
+            }}>
+              Nouvelle partie
+            </Button>
           </CardContent>
         </Card>
       </div>
@@ -959,7 +717,6 @@ const DicoClash = () => {
 
   if (gameState === "playing" && currentGame) {
     const isGiver = currentGame.current_giver_id === currentPlayer?.id;
-    const timePercent = (timeLeft / 60) * 100;
     const isPlayer1 = currentGame.player1_id === currentPlayer?.id;
     const playerScore = isPlayer1 ? currentGame.player1_score : currentGame.player2_score;
     const opponentScore = isPlayer1 ? currentGame.player2_score : currentGame.player1_score;
@@ -968,252 +725,135 @@ const DicoClash = () => {
     return (
       <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-blue-50 p-4">
         <div className="max-w-4xl mx-auto space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-2xl font-bold">Round {currentGame.current_round}/4</h2>
-              <p className="text-sm text-gray-600">
-                Vous êtes : <Badge variant={isGiver ? "default" : "secondary"} className={isGiver ? "bg-red-600" : ""}>
-                  {isGiver ? "Donneur" : "Devineur"}
-                </Badge>
-              </p>
-            </div>
-            <div className="text-right">
-              <div className="flex items-center gap-2 text-sm text-gray-600">
-                <User className="w-4 h-4" />
-                <span>vs {opponentPseudo}</span>
+          {/* Header */}
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h2 className="text-xl font-bold">Round {currentGame.current_round}/4</h2>
+                  <Badge>{isGiver ? "Donneur" : "Devineur"}</Badge>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm">vs {opponentPseudo}</p>
+                  <p className="text-xl font-bold">{playerScore} - {opponentScore}</p>
+                </div>
               </div>
-              <div className="text-xl font-bold">
-                <span className="text-blue-600">{playerScore}</span>
-                <span className="text-gray-400 mx-2">-</span>
-                <span className="text-red-600">{opponentScore}</span>
-              </div>
-            </div>
-          </div>
+            </CardContent>
+          </Card>
 
+          {/* Temps et tentatives */}
           <div className="grid grid-cols-2 gap-4">
-            <Card className="border-2 border-red-100">
+            <Card>
               <CardContent className="p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <Clock className="w-5 h-5 text-gray-600" />
-                    <span className="font-semibold text-sm">Temps</span>
-                  </div>
-                  <span className={`text-xl font-bold ${
-                    timeLeft > 30 ? 'text-green-600' :
-                    timeLeft > 10 ? 'text-yellow-600' : 'text-red-600'
-                  }`}>
-                    {timeLeft}s
-                  </span>
-                </div>
-                <Progress value={timePercent} className="h-2" />
+                <p className="text-sm mb-2">Temps</p>
+                <p className="text-2xl font-bold">{timeLeft}s</p>
+                <Progress value={(timeLeft / 60) * 100} className="mt-2" />
               </CardContent>
             </Card>
-
-            <Card className="border-2 border-blue-100">
+            <Card>
               <CardContent className="p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <Target className="w-5 h-5 text-gray-600" />
-                    <span className="font-semibold text-sm">Tentatives</span>
-                  </div>
-                  <span className={`text-xl font-bold ${
-                    attemptsLeft > 2 ? 'text-green-600' :
-                    attemptsLeft > 1 ? 'text-yellow-600' : 'text-red-600'
-                  }`}>
-                    {attemptsLeft}/4
-                  </span>
-                </div>
-                <Progress value={(attempts.length / 4) * 100} className="h-2" />
+                <p className="text-sm mb-2">Tentatives</p>
+                <p className="text-2xl font-bold">{attemptsLeft}/4</p>
+                <Progress value={(attempts.length / 4) * 100} className="mt-2" />
               </CardContent>
             </Card>
           </div>
 
-          {isGiver ? (
-            <>
-              <Card className="border-2 border-red-100">
-                <CardHeader>
-                  <CardTitle>Votre mot à faire deviner</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-center py-8">
-                    <div className="inline-block bg-gradient-to-r from-red-600 to-blue-600 text-white px-8 py-4 rounded-xl text-4xl font-bold tracking-wider shadow-lg">
-                      {currentGame.current_word}
-                    </div>
+          {/* Mot à faire deviner (si donneur) */}
+          {isGiver && (
+            <Card>
+              <CardHeader><CardTitle>Votre mot</CardTitle></CardHeader>
+              <CardContent>
+                <div className="text-center py-8">
+                  <div className="inline-block bg-red-600 text-white px-8 py-4 rounded-xl text-4xl font-bold">
+                    {currentGame.current_word}
                   </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Historique des tentatives</CardTitle>
-                  <CardDescription>
-                    {attemptsLeft > 0 ? `${attemptsLeft} tentative(s) restante(s)` : "Aucune tentative restante"}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {attempts.map((attempt, index) => (
-                    <div key={index} className="border-2 border-gray-200 rounded-lg p-4">
-                      <div className="flex items-start gap-3 mb-2">
-                        <Badge className="bg-blue-600">#{index + 1}</Badge>
-                        <div className="flex-1">
-                          <p className="text-sm text-gray-600">Votre indice :</p>
-                          <p className="font-semibold">{attempt.clue}</p>
-                        </div>
-                      </div>
-                      {attempt.guess && (
-                        <div className="flex items-center gap-3 mt-2 pt-2 border-t">
-                          {attempt.correct ? (
-                            <Badge className="bg-green-600">✓ Trouvé !</Badge>
-                          ) : (
-                            <Badge variant="destructive">✗ Faux</Badge>
-                          )}
-                          <p className="text-sm">Réponse : <span className="font-medium">{attempt.guess}</span></p>
-                        </div>
-                      )}
-                      {!attempt.guess && (
-                        <div className="mt-2 pt-2 border-t text-sm text-gray-500 italic">
-                          En attente de la réponse...
-                        </div>
-                      )}
-                    </div>
-                  ))}
-
-                  {attemptsLeft > 0 && !waitingForOpponent && !isTransitioning && attempts.length > 0 && attempts[attempts.length - 1].guess && !attempts[attempts.length - 1].correct && (
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={currentClue}
-                        onChange={(e) => setCurrentClue(e.target.value)}
-                        onKeyPress={(e) => e.key === 'Enter' && sendClue()}
-                        placeholder="Donnez un nouvel indice..."
-                        className="flex-1 px-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500"
-                        maxLength={50}
-                      />
-                      <Button
-                        onClick={sendClue}
-                        disabled={!currentClue.trim()}
-                        className="bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800"
-                      >
-                        <Send className="w-4 h-4 mr-2" />
-                        Envoyer
-                      </Button>
-                    </div>
-                  )}
-
-                  {attempts.length === 0 && !isTransitioning && (
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={currentClue}
-                        onChange={(e) => setCurrentClue(e.target.value)}
-                        onKeyPress={(e) => e.key === 'Enter' && sendClue()}
-                        placeholder="Donnez votre premier indice..."
-                        className="flex-1 px-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500"
-                        maxLength={50}
-                      />
-                      <Button
-                        onClick={sendClue}
-                        disabled={!currentClue.trim()}
-                        className="bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800"
-                      >
-                        <Send className="w-4 h-4 mr-2" />
-                        Envoyer
-                      </Button>
-                    </div>
-                  )}
-
-                  {(waitingForOpponent || isTransitioning) && (
-                    <div className="text-center py-4 text-gray-500">
-                      <div className="animate-pulse flex items-center justify-center gap-2">
-                        <AlertCircle className="w-5 h-5" />
-                        <span>{isTransitioning ? "Passage au round suivant..." : `En attente de ${opponentPseudo}...`}</span>
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </>
-          ) : (
-            <>
-              <Card>
-                <CardHeader>
-                  <CardTitle>Historique des tentatives</CardTitle>
-                  <CardDescription>
-                    {attemptsLeft > 0 ? `${attemptsLeft} tentative(s) restante(s)` : "Aucune tentative restante"}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {attempts.length === 0 ? (
-                    <p className="text-center text-gray-500 py-8">
-                      En attente du premier indice de {opponentPseudo}...
-                    </p>
-                  ) : (
-                    attempts.map((attempt, index) => (
-                      <div key={index} className="border-2 border-gray-200 rounded-lg p-4">
-                        <div className="flex items-start gap-3 mb-2">
-                          <Badge className="bg-red-600">#{index + 1}</Badge>
-                          <div className="flex-1">
-                            <p className="text-sm text-gray-600">Indice de {opponentPseudo} :</p>
-                            <p className="font-semibold text-lg">{attempt.clue}</p>
-                          </div>
-                        </div>
-                        {attempt.guess && (
-                          <div className="flex items-center gap-3 mt-2 pt-2 border-t">
-                            {attempt.correct ? (
-                              <Badge className="bg-green-600">✓ Vous avez trouvé !</Badge>
-                            ) : (
-                              <Badge variant="destructive">✗ Raté</Badge>
-                            )}
-                            <p className="text-sm">Votre réponse : <span className="font-medium">{attempt.guess}</span></p>
-                          </div>
-                        )}
-                      </div>
-                    ))
-                  )}
-
-                  {attempts.length > 0 && !attempts[attempts.length - 1].guess && !waitingForOpponent && !isTransitioning && (
-                    <Card className="border-2 border-red-100 bg-red-50">
-                      <CardHeader>
-                        <CardTitle className="text-lg">À vous de deviner !</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="space-y-3">
-                          <input
-                            type="text"
-                            value={currentGuess}
-                            onChange={(e) => setCurrentGuess(e.target.value.toUpperCase())}
-                            onKeyPress={(e) => e.key === 'Enter' && submitGuess()}
-                            placeholder="VOTRE RÉPONSE..."
-                            className="w-full px-4 py-3 text-lg border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 text-center font-bold uppercase"
-                            maxLength={30}
-                            autoFocus
-                          />
-                          <Button
-                            onClick={submitGuess}
-                            disabled={!currentGuess.trim()}
-                            className="w-full bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800"
-                            size="lg"
-                          >
-                            <Send className="w-5 h-5 mr-2" />
-                            Valider ma réponse
-                          </Button>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  )}
-
-                  {(waitingForOpponent || isTransitioning) && (
-                    <div className="text-center py-4 text-gray-500">
-                      <div className="animate-pulse flex items-center justify-center gap-2">
-                        <AlertCircle className="w-5 h-5" />
-                        <span>{isTransitioning ? "Passage au round suivant..." : `En attente de ${opponentPseudo}...`}</span>
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </>
+                </div>
+              </CardContent>
+            </Card>
           )}
+
+          {/* Historique */}
+          <Card>
+            <CardHeader><CardTitle>Historique</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              {attempts.length === 0 && (
+                <p className="text-gray-500 text-center py-4">
+                  {isGiver ? "Donnez le premier indice" : `En attente de ${opponentPseudo}...`}
+                </p>
+              )}
+
+              {attempts.map((attempt, index) => (
+                <div key={index} className="border-2 rounded-lg p-3">
+                  <div className="flex gap-2 mb-2">
+                    <Badge>#{index + 1}</Badge>
+                    <p className="font-semibold">{attempt.clue}</p>
+                  </div>
+                  {attempt.guess && (
+                    <div className="pl-8">
+                      <Badge variant={attempt.correct ? "default" : "destructive"}>
+                        {attempt.correct ? "✓" : "✗"} {attempt.guess}
+                      </Badge>
+                    </div>
+                  )}
+                  {!attempt.guess && (
+                    <p className="text-sm text-gray-500 pl-8">En attente...</p>
+                  )}
+                </div>
+              ))}
+
+              {/* Input zone */}
+              {showTransition && (
+                <div className="text-center py-4">
+                  <AlertCircle className="w-6 h-6 mx-auto mb-2 animate-pulse" />
+                  <p className="text-gray-600">Passage au round suivant...</p>
+                </div>
+              )}
+
+              {!showTransition && isGiver && attemptsLeft > 0 && (
+                (attempts.length === 0 || (attempts[attempts.length - 1].guess && !attempts[attempts.length - 1].correct)) && !waitingForOpponent && (
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={currentClue}
+                      onChange={(e) => setCurrentClue(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && sendClue()}
+                      placeholder="Votre indice..."
+                      className="flex-1 px-4 py-2 border-2 rounded-lg"
+                      maxLength={50}
+                    />
+                    <Button onClick={sendClue} disabled={!currentClue.trim()}>
+                      <Send className="w-4 h-4" />
+                    </Button>
+                  </div>
+                )
+              )}
+
+              {!showTransition && !isGiver && attempts.length > 0 && !attempts[attempts.length - 1].guess && !waitingForOpponent && (
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={currentGuess}
+                    onChange={(e) => setCurrentGuess(e.target.value.toUpperCase())}
+                    onKeyPress={(e) => e.key === 'Enter' && submitGuess()}
+                    placeholder="VOTRE RÉPONSE..."
+                    className="w-full px-4 py-3 border-2 rounded-lg text-center font-bold text-lg uppercase"
+                    maxLength={30}
+                    autoFocus
+                  />
+                  <Button onClick={submitGuess} disabled={!currentGuess.trim()} className="w-full">
+                    Valider
+                  </Button>
+                </div>
+              )}
+
+              {waitingForOpponent && !showTransition && (
+                <p className="text-center text-gray-500 py-4">
+                  En attente de {opponentPseudo}...
+                </p>
+              )}
+            </CardContent>
+          </Card>
         </div>
       </div>
     );
