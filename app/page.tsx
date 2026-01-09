@@ -66,12 +66,13 @@ const DicoClash = () => {
   const [error, setError] = useState<string | null>(null);
   const [queueTime, setQueueTime] = useState(0);
   const [timeLeft, setTimeLeft] = useState(60);
-  const [isProcessingRound, setIsProcessingRound] = useState(false);
+  const [isTransitioning, setIsTransitioning] = useState(false);
 
   const heartbeatInterval = useRef<NodeJS.Timeout | null>(null);
   const gameSubscription = useRef<any>(null);
   const roundsSubscription = useRef<any>(null);
   const matchmakingInterval = useRef<NodeJS.Timeout | null>(null);
+  const processingRoundRef = useRef(false);
 
   useEffect(() => {
     setMounted(true);
@@ -108,7 +109,7 @@ const DicoClash = () => {
   }, [gameState]);
 
   useEffect(() => {
-    if (gameState === "playing" && timeLeft > 0 && !isProcessingRound) {
+    if (gameState === "playing" && timeLeft > 0 && !isTransitioning) {
       const interval = setInterval(() => {
         setTimeLeft(prev => {
           if (prev <= 1) {
@@ -120,7 +121,7 @@ const DicoClash = () => {
       }, 1000);
       return () => clearInterval(interval);
     }
-  }, [gameState, timeLeft, isProcessingRound]);
+  }, [gameState, timeLeft, isTransitioning]);
 
   const startHeartbeat = async () => {
     if (!currentPlayer) return;
@@ -247,9 +248,9 @@ const DicoClash = () => {
           setTimeLeft(60);
           setAttempts([]);
           setWaitingForOpponent(false);
-          setIsProcessingRound(false);
+          setIsTransitioning(false);
+          processingRoundRef.current = false;
 
-          // Attendre 500ms avant de subscribe pour être sûr que tout est prêt
           setTimeout(() => {
             subscribeToGame(existingGame.id);
             setGameState("playing");
@@ -288,9 +289,9 @@ const DicoClash = () => {
               setTimeLeft(60);
               setAttempts([]);
               setWaitingForOpponent(false);
-              setIsProcessingRound(false);
+              setIsTransitioning(false);
+              processingRoundRef.current = false;
 
-              // Attendre 500ms avant de subscribe
               setTimeout(() => {
                 subscribeToGame(match.game_id);
                 setGameState("playing");
@@ -337,15 +338,15 @@ const DicoClash = () => {
         if (payload.new) {
           const gameData = payload.new as GameData;
 
-          // Si le round a changé, reset les tentatives localement
           if (currentGame && gameData.current_round !== currentGame.current_round) {
-            console.log('🔄 Nouveau round détecté, reset des tentatives');
+            console.log('🔄 Nouveau round détecté, reset local');
             setAttempts([]);
             setCurrentClue("");
             setCurrentGuess("");
             setWaitingForOpponent(false);
             setTimeLeft(60);
-            setIsProcessingRound(false);
+            setIsTransitioning(false);
+            processingRoundRef.current = false;
           }
 
           setCurrentGame(gameData);
@@ -355,9 +356,7 @@ const DicoClash = () => {
           }
         }
       })
-      .subscribe((status) => {
-        console.log('📡 Statut subscription game:', status);
-      });
+      .subscribe();
 
     roundsSubscription.current = supabase
       .channel(`rounds:${gameId}:${Date.now()}`)
@@ -371,21 +370,14 @@ const DicoClash = () => {
 
         if (payload.new) {
           const newRound = payload.new;
-          console.log('🔍 Données du round:', newRound);
 
           if (newRound.clues && newRound.clues.length > 0 && newRound.giver_id) {
-            console.log('📝 Indices reçus:', newRound.clues);
-
             if (newRound.giver_id !== currentPlayer?.id) {
               const lastClue = newRound.clues[newRound.clues.length - 1];
 
               setAttempts(prev => {
                 const exists = prev.some(a => a.clue === lastClue);
-                if (exists) {
-                  console.log('⚠️ Indice déjà présent');
-                  return prev;
-                }
-                console.log('➕ Ajout du nouvel indice:', lastClue);
+                if (exists) return prev;
                 return [...prev, { clue: lastClue, guess: '', correct: false }];
               });
 
@@ -409,23 +401,19 @@ const DicoClash = () => {
                 return newAttempts;
               });
 
-              if (newRound.won) {
-                console.log('✅ Mot trouvé par adversaire !');
-                if (!isProcessingRound) {
-                  setIsProcessingRound(true);
-                  setTimeout(() => handleNextRound(), 2000);
-                }
-              } else {
-                console.log('❌ Réponse incorrecte de adversaire');
+              if (newRound.won && !processingRoundRef.current) {
+                console.log('✅ Mot trouvé par adversaire, transition...');
+                processingRoundRef.current = true;
+                setIsTransitioning(true);
+                setTimeout(() => handleNextRound(), 2000);
+              } else if (!newRound.won) {
                 setWaitingForOpponent(false);
               }
             }
           }
         }
       })
-      .subscribe((status) => {
-        console.log('📡 Statut subscription rounds:', status);
-      });
+      .subscribe();
   };
 
   const unsubscribeFromGame = () => {
@@ -454,17 +442,14 @@ const DicoClash = () => {
     setWaitingForOpponent(true);
 
     const allClues = [...attempts.map(a => a.clue), currentClue.trim()];
-    console.log('📋 Tous les indices:', allClues);
 
-    const { data, error } = await supabase.from('rounds').insert({
+    await supabase.from('rounds').insert({
       game_id: currentGame.id,
       round_number: currentGame.current_round,
       word: currentGame.current_word,
       giver_id: currentPlayer?.id,
       clues: allClues
-    }).select();
-
-    console.log('✉️ Résultat insertion indice:', { data, error });
+    });
 
     await supabase.from('games').update({
       attempts_used: allClues.length
@@ -492,7 +477,7 @@ const DicoClash = () => {
     setCurrentGuess("");
     setWaitingForOpponent(true);
 
-    const { data, error } = await supabase.from('rounds').insert({
+    await supabase.from('rounds').insert({
       game_id: currentGame.id,
       round_number: currentGame.current_round,
       word: currentGame.current_word,
@@ -500,9 +485,7 @@ const DicoClash = () => {
       guess_word: guessUpper,
       won: isCorrect,
       time_taken: 60 - timeLeft
-    }).select();
-
-    console.log('✉️ Résultat insertion réponse:', { data, error });
+    });
 
     if (isCorrect) {
       const isPlayer1 = currentGame.player1_id === currentPlayer?.id;
@@ -510,13 +493,15 @@ const DicoClash = () => {
         [isPlayer1 ? 'player1_score' : 'player2_score']: isPlayer1 ? currentGame.player1_score + 1 : currentGame.player2_score + 1
       }).eq('id', currentGame.id);
 
-      if (!isProcessingRound) {
-        setIsProcessingRound(true);
+      if (!processingRoundRef.current) {
+        processingRoundRef.current = true;
+        setIsTransitioning(true);
         setTimeout(() => handleNextRound(), 2000);
       }
     } else if (attempts.length >= 4) {
-      if (!isProcessingRound) {
-        setIsProcessingRound(true);
+      if (!processingRoundRef.current) {
+        processingRoundRef.current = true;
+        setIsTransitioning(true);
         setTimeout(() => handleNextRound(), 2000);
       }
     } else {
@@ -525,55 +510,65 @@ const DicoClash = () => {
   };
 
   const handleTimeOut = () => {
-    if (!isProcessingRound) {
-      setIsProcessingRound(true);
+    if (!processingRoundRef.current) {
+      processingRoundRef.current = true;
+      setIsTransitioning(true);
       handleNextRound();
     }
   };
 
   const handleNextRound = async () => {
-    if (!currentGame || isProcessingRound) return;
+    if (!currentGame) {
+      console.log('⚠️ Pas de currentGame');
+      return;
+    }
 
-    setIsProcessingRound(true);
-    console.log('🔄 handleNextRound appelé, round actuel:', currentGame.current_round);
+    console.log('🔄 handleNextRound - Round:', currentGame.current_round, 'Processing:', processingRoundRef.current);
 
     if (currentGame.current_round >= 4) {
       console.log('🏁 Fin de partie');
       await supabase.from('games').update({
         status: 'finished'
       }).eq('id', currentGame.id);
+      return;
+    }
+
+    setGameState("waiting");
+
+    // Seulement le player1 fait la mise à jour de la BDD
+    if (currentGame.player1_id === currentPlayer?.id) {
+      console.log('👑 Player1 prépare le round suivant');
+
+      setTimeout(async () => {
+        const nextRound = currentGame.current_round + 1;
+        const { data: word } = await supabase.rpc('get_random_word');
+        const newGiverId = currentGame.current_giver_id === currentGame.player1_id
+          ? currentGame.player2_id
+          : currentGame.player1_id;
+
+        console.log('📝 Mise à jour BDD - Round', nextRound, 'Mot:', word);
+
+        await supabase.from('games').update({
+          current_round: nextRound,
+          current_word: word || 'ELEPHANT',
+          current_giver_id: newGiverId,
+          time_left: 60,
+          attempts_used: 0,
+          round_start_time: new Date().toISOString()
+        }).eq('id', currentGame.id);
+
+        processingRoundRef.current = false;
+        setIsTransitioning(false);
+        setGameState("playing");
+      }, 3000);
     } else {
-      setGameState("waiting");
-
-      // Seulement le player1 met à jour le jeu pour éviter les doublons
-      if (currentGame.player1_id === currentPlayer?.id) {
-        console.log('👑 Player1 met à jour le jeu pour le round suivant');
-
-        setTimeout(async () => {
-          const nextRound = currentGame.current_round + 1;
-          const { data: word } = await supabase.rpc('get_random_word');
-          const newGiverId = currentGame.current_giver_id === currentGame.player1_id
-            ? currentGame.player2_id
-            : currentGame.player1_id;
-
-          await supabase.from('games').update({
-            current_round: nextRound,
-            current_word: word || 'ELEPHANT',
-            current_giver_id: newGiverId,
-            time_left: 60,
-            attempts_used: 0,
-            round_start_time: new Date().toISOString()
-          }).eq('id', currentGame.id);
-
-          setGameState("playing");
-        }, 3000);
-      } else {
-        console.log('👤 Player2 attend la mise à jour du jeu');
-        // Player2 attend juste que la subscription détecte le changement
-        setTimeout(() => {
-          setGameState("playing");
-        }, 3000);
-      }
+      console.log('👤 Player2 attend la mise à jour');
+      // Player2 attend la subscription pour détecter le changement
+      setTimeout(() => {
+        processingRoundRef.current = false;
+        setIsTransitioning(false);
+        setGameState("playing");
+      }, 3500);
     }
   };
 
@@ -607,8 +602,7 @@ const DicoClash = () => {
 
   if (!mounted) return null;
 
-  // [TOUS LES ÉTATS UI RESTENT IDENTIQUES - je ne les répète pas pour économiser de l'espace]
-  // Gardez exactement le même code que précédemment pour : login, home, queue, waiting, results, playing
+  // [TOUS LES ÉTATS UI - identiques au code précédent, je garde seulement les parties qui changent]
 
   if (gameState === "login") {
     return (
@@ -701,6 +695,7 @@ const DicoClash = () => {
             </Card>
           </div>
 
+          {/* Reste du code login identique - sections Comment jouer, Règles, etc. */}
           <div className="mb-8 sm:mb-12">
             <h3 className="text-2xl sm:text-3xl font-bold text-center mb-6 sm:mb-8">
               Comment jouer ?
@@ -1320,7 +1315,7 @@ const DicoClash = () => {
                     </div>
                   ))}
 
-                  {attemptsLeft > 0 && !waitingForOpponent && !isProcessingRound && attempts.length > 0 && attempts[attempts.length - 1].guess && !attempts[attempts.length - 1].correct && (
+                  {attemptsLeft > 0 && !waitingForOpponent && !isTransitioning && attempts.length > 0 && attempts[attempts.length - 1].guess && !attempts[attempts.length - 1].correct && (
                     <div className="flex gap-2">
                       <input
                         type="text"
@@ -1342,7 +1337,7 @@ const DicoClash = () => {
                     </div>
                   )}
 
-                  {attempts.length === 0 && !isProcessingRound && (
+                  {attempts.length === 0 && !isTransitioning && (
                     <div className="flex gap-2">
                       <input
                         type="text"
@@ -1364,11 +1359,11 @@ const DicoClash = () => {
                     </div>
                   )}
 
-                  {(waitingForOpponent || isProcessingRound) && (
+                  {(waitingForOpponent || isTransitioning) && (
                     <div className="text-center py-4 text-gray-500">
                       <div className="animate-pulse flex items-center justify-center gap-2">
                         <AlertCircle className="w-5 h-5" />
-                        <span>{isProcessingRound ? "Passage au round suivant..." : `En attente de ${opponentPseudo}...`}</span>
+                        <span>{isTransitioning ? "Passage au round suivant..." : `En attente de ${opponentPseudo}...`}</span>
                       </div>
                     </div>
                   )}
@@ -1413,7 +1408,7 @@ const DicoClash = () => {
                     ))
                   )}
 
-                  {attempts.length > 0 && !attempts[attempts.length - 1].guess && !waitingForOpponent && !isProcessingRound && (
+                  {attempts.length > 0 && !attempts[attempts.length - 1].guess && !waitingForOpponent && !isTransitioning && (
                     <Card className="border-2 border-red-100 bg-red-50">
                       <CardHeader>
                         <CardTitle className="text-lg">À vous de deviner !</CardTitle>
@@ -1444,11 +1439,11 @@ const DicoClash = () => {
                     </Card>
                   )}
 
-                  {(waitingForOpponent || isProcessingRound) && (
+                  {(waitingForOpponent || isTransitioning) && (
                     <div className="text-center py-4 text-gray-500">
                       <div className="animate-pulse flex items-center justify-center gap-2">
                         <AlertCircle className="w-5 h-5" />
-                        <span>{isProcessingRound ? "Passage au round suivant..." : `En attente de ${opponentPseudo}...`}</span>
+                        <span>{isTransitioning ? "Passage au round suivant..." : `En attente de ${opponentPseudo}...`}</span>
                       </div>
                     </div>
                   )}
