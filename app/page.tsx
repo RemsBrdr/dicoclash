@@ -338,12 +338,10 @@ const DicoClash = () => {
         if (payload.new) {
           const gameData = payload.new as GameData;
 
-          // Si le round a changé ET qu'on ne l'a pas encore traité
           if (gameData.current_round !== lastProcessedRound.current) {
-            console.log('🔄 NOUVEAU ROUND:', gameData.current_round, 'Ancien:', lastProcessedRound.current, 'État:', gameState);
+            console.log('🔄 NOUVEAU ROUND:', gameData.current_round, 'État:', gameState);
             lastProcessedRound.current = gameData.current_round;
 
-            // Reset complet
             setAttempts([]);
             setCurrentClue("");
             setCurrentGuess("");
@@ -351,7 +349,6 @@ const DicoClash = () => {
             setTimeLeft(60);
             setIsTransitioning(false);
 
-            // FORCER le passage à "playing" peu importe l'état actuel
             console.log('✅ FORCER gameState = playing');
             setGameState("playing");
           }
@@ -364,9 +361,7 @@ const DicoClash = () => {
           }
         }
       })
-      .subscribe((status) => {
-        console.log('📡 Statut subscription game:', status);
-      });
+      .subscribe();
 
     roundsSubscription.current = supabase
       .channel(`rounds:${gameId}:${Date.now()}`)
@@ -376,8 +371,6 @@ const DicoClash = () => {
         table: 'rounds',
         filter: `game_id=eq.${gameId}`
       }, async (payload: any) => {
-        console.log('📥 Nouveau round reçu:', payload);
-
         if (payload.new) {
           const newRound = payload.new;
 
@@ -388,7 +381,6 @@ const DicoClash = () => {
               setAttempts(prev => {
                 const exists = prev.some(a => a.clue === lastClue);
                 if (exists) return prev;
-                console.log('➕ Ajout indice:', lastClue);
                 return [...prev, { clue: lastClue, guess: '', correct: false }];
               });
 
@@ -397,8 +389,6 @@ const DicoClash = () => {
           }
 
           if (newRound.guess_word && newRound.guesser_id) {
-            console.log('🎯 Réponse:', newRound.guess_word, 'Won:', newRound.won);
-
             if (newRound.guesser_id !== currentPlayer?.id) {
               setAttempts(prev => {
                 const newAttempts = [...prev];
@@ -413,7 +403,6 @@ const DicoClash = () => {
               });
 
               if (newRound.won) {
-                console.log('✅ Mot trouvé, transition');
                 setIsTransitioning(true);
                 setTimeout(() => handleNextRound(), 2000);
               } else {
@@ -423,9 +412,7 @@ const DicoClash = () => {
           }
         }
       })
-      .subscribe((status) => {
-        console.log('📡 Statut subscription rounds:', status);
-      });
+      .subscribe();
   };
 
   const unsubscribeFromGame = () => {
@@ -446,8 +433,6 @@ const DicoClash = () => {
       alert("⚠️ L'indice ne peut pas commencer par les 3 mêmes lettres que le mot !");
       return;
     }
-
-    console.log('📤 Envoi indice:', currentClue.trim());
 
     setAttempts(prev => [...prev, { clue: currentClue.trim(), guess: '', correct: false }]);
     setCurrentClue("");
@@ -473,8 +458,6 @@ const DicoClash = () => {
 
     const guessUpper = currentGuess.trim().toUpperCase();
     const isCorrect = guessUpper === currentGame.current_word;
-
-    console.log('🎯 Envoi réponse:', guessUpper, 'Correct:', isCorrect);
 
     setAttempts(prev => {
       const newAttempts = [...prev];
@@ -505,11 +488,9 @@ const DicoClash = () => {
         [isPlayer1 ? 'player1_score' : 'player2_score']: isPlayer1 ? currentGame.player1_score + 1 : currentGame.player2_score + 1
       }).eq('id', currentGame.id);
 
-      console.log('✅ Mot trouvé par moi, transition');
       setIsTransitioning(true);
       setTimeout(() => handleNextRound(), 2000);
     } else if (attempts.length >= 4) {
-      console.log('❌ 4 tentatives, next round');
       setIsTransitioning(true);
       setTimeout(() => handleNextRound(), 2000);
     } else {
@@ -518,44 +499,29 @@ const DicoClash = () => {
   };
 
   const handleTimeOut = () => {
-    console.log('⏱️ Timeout');
     setIsTransitioning(true);
     handleNextRound();
   };
 
   const handleNextRound = async () => {
-    if (!currentGame) {
-      console.log('⚠️ Pas de currentGame');
-      return;
-    }
-
-    console.log('🔄 handleNextRound - Round:', currentGame.current_round);
+    if (!currentGame) return;
 
     if (currentGame.current_round >= 4) {
-      console.log('🏁 Fin partie');
       await supabase.from('games').update({
         status: 'finished'
       }).eq('id', currentGame.id);
       return;
     }
 
-    // NE PAS changer gameState ici, laisser la subscription gérer
-    console.log('⏳ Attente 3s avant update BDD');
-
-    // UNIQUEMENT Player1 update la BDD
     const isPlayer1 = currentGame.player1_id === currentPlayer?.id;
 
     if (isPlayer1) {
-      console.log('👑 Player1 update BDD');
-
       setTimeout(async () => {
         const nextRound = currentGame.current_round + 1;
         const { data: word } = await supabase.rpc('get_random_word');
         const newGiverId = currentGame.current_giver_id === currentGame.player1_id
           ? currentGame.player2_id
           : currentGame.player1_id;
-
-        console.log('📝 UPDATE BDD Round:', nextRound);
 
         await supabase.from('games').update({
           current_round: nextRound,
@@ -565,11 +531,7 @@ const DicoClash = () => {
           attempts_used: 0,
           round_start_time: new Date().toISOString()
         }).eq('id', currentGame.id);
-
-        console.log('✅ UPDATE BDD OK');
       }, 3000);
-    } else {
-      console.log('👤 Player2 attend subscription');
     }
   };
 
@@ -602,8 +564,6 @@ const DicoClash = () => {
   };
 
   if (!mounted) return null;
-
-  // [ÉTATS UI - Login, Home, Queue - identiques, je saute à Waiting et Playing]
 
   if (gameState === "login") {
     return (
@@ -695,21 +655,205 @@ const DicoClash = () => {
               </CardContent>
             </Card>
           </div>
+        </div>
+      </div>
+    );
+  }
 
-          {/* Sections Comment jouer, Règles, Leaderboard - identiques au code précédent */}
-          <div className="mt-8 sm:mt-12 text-center text-xs sm:text-sm text-gray-500">
-            <p>DicoClash - Le jeu de vocabulaire multijoueur ultra-rapide</p>
-            <p className="mt-2">
-              <Wifi className="inline w-3 h-3 mr-1" />
-              {onlinePlayers} joueurs connectés en ce moment
+  if (gameState === "home") {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-blue-50 p-4">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center py-8">
+            <div className="flex items-center justify-center gap-3 mb-4">
+              <Swords className="w-12 h-12 text-red-600" />
+              <h1 className="text-5xl font-bold bg-gradient-to-r from-red-600 to-blue-600 bg-clip-text text-transparent">
+                DicoClash
+              </h1>
+            </div>
+            <p className="text-gray-700 text-xl font-semibold mb-2">
+              60 secondes. 4 tentatives. 1 champion.
             </p>
+            <Badge variant="outline" className="text-base">
+              <User className="w-4 h-4 mr-2" />
+              {currentPlayer?.pseudo}
+            </Badge>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-6 mb-8">
+            <Card className="md:col-span-2 border-2 border-red-100">
+              <CardContent className="p-8">
+                <div className="text-center space-y-6">
+                  <div>
+                    <h2 className="text-3xl font-bold mb-3">Prêt pour le clash ?</h2>
+                    <p className="text-gray-600 mb-6">
+                      Affrontez des adversaires réels en temps réel
+                    </p>
+                  </div>
+
+                  <Button
+                    onClick={joinQueue}
+                    className="text-xl px-12 py-6 h-auto bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800"
+                  >
+                    <Zap className="mr-2 w-6 h-6" />
+                    Trouver un adversaire
+                  </Button>
+
+                  <div className="flex items-center justify-center gap-2 text-sm text-gray-500">
+                    <Wifi className="w-4 h-4 text-green-500" />
+                    <span>{onlinePlayers} joueurs en ligne</span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Trophy className="w-5 h-5 text-yellow-600" />
+                  Vos statistiques
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-gray-600">Parties jouées</span>
+                  <span className="font-bold">{currentPlayer?.total_games || 0}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-gray-600">Victoires</span>
+                  <span className="font-bold text-green-600">{currentPlayer?.games_won || 0}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-gray-600">Score Donneur</span>
+                  <Badge variant="secondary">{currentPlayer?.score_giver || 1500}</Badge>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-gray-600">Score Devineur</span>
+                  <Badge variant="secondary">{currentPlayer?.score_guesser || 1500}</Badge>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Swords className="w-5 h-5 text-red-600" />
+                  Comment jouer
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm text-gray-700">
+                <p>⚔️ Matchs en 1 vs 1 contre de vrais joueurs</p>
+                <p>🏓 Système ping-pong : 4 tentatives maximum</p>
+                <p>⏱️ 60 secondes et 4 aller-retours max</p>
+                <p>🏆 Gagnez des points ELO à chaque victoire</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Crown className="w-5 h-5 text-yellow-600" />
+                Classement des Champions
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {leaderboard.length === 0 ? (
+                  <p className="text-center text-gray-500 py-4">Chargement...</p>
+                ) : (
+                  leaderboard.map((player) => (
+                    <div
+                      key={player.id}
+                      className={`flex items-center justify-between p-3 rounded-lg border ${
+                        player.id === currentPlayer?.id
+                          ? 'bg-red-50 border-red-200'
+                          : 'bg-gradient-to-r from-gray-50 to-transparent border-gray-100'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2">
+                          {getRankBadge(player.rank)}
+                          <span className="font-bold text-gray-700">#{player.rank}</span>
+                        </div>
+                        <span className="font-medium">
+                          {player.pseudo}
+                          {player.id === currentPlayer?.id && (
+                            <Badge variant="outline" className="ml-2 text-xs">Vous</Badge>
+                          )}
+                        </span>
+                      </div>
+                      <div className="flex gap-4 text-sm">
+                        <div className="text-center">
+                          <p className="text-xs text-gray-500">Score</p>
+                          <p className="font-bold">{Math.round(player.score_average)}</p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-xs text-gray-500">Victoires</p>
+                          <p className="font-bold text-green-600">{player.games_won}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="mt-6 text-center">
+            <Button
+              variant="outline"
+              onClick={() => {
+                stopHeartbeat();
+                setCurrentPlayer(null);
+                setGameState("login");
+              }}
+            >
+              Changer de pseudo
+            </Button>
           </div>
         </div>
       </div>
     );
   }
 
-  // États home, queue - gardez le code précédent tel quel
+  if (gameState === "queue") {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-blue-50 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md border-2 border-red-100">
+          <CardContent className="p-8 text-center space-y-6">
+            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto">
+              <Users className="w-8 h-8 text-red-600 animate-pulse" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold mb-2">Recherche d'adversaire...</h2>
+              <p className="text-gray-600">Un vrai joueur va vous rejoindre</p>
+            </div>
+            <div className="space-y-2">
+              <Progress value={(queueTime % 3) * 33} className="h-2" />
+              <p className="text-sm text-gray-500">{queueTime}s écoulées</p>
+              <p className="text-xs text-gray-400">
+                <Wifi className="inline w-3 h-3 mr-1" />
+                {onlinePlayers} joueurs en ligne
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => {
+                leaveQueue();
+                if (matchmakingInterval.current) {
+                  clearInterval(matchmakingInterval.current);
+                }
+                setGameState("home");
+              }}
+            >
+              Annuler
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   if (gameState === "waiting") {
     if (!currentGame) return null;
@@ -737,16 +881,343 @@ const DicoClash = () => {
                 <p className="text-3xl font-bold text-red-600">{opponentScore}</p>
               </div>
             </div>
-            <p className="text-sm text-gray-500 italic">
-              En attente de la synchronisation...
-            </p>
           </CardContent>
         </Card>
       </div>
     );
   }
 
-  // États results, playing - gardez le code précédent tel quel
+  if (gameState === "results") {
+    if (!currentGame) return null;
+
+    const isPlayer1 = currentGame.player1_id === currentPlayer?.id;
+    const playerScore = isPlayer1 ? currentGame.player1_score : currentGame.player2_score;
+    const opponentScore = isPlayer1 ? currentGame.player2_score : currentGame.player1_score;
+    const isWinner = playerScore > opponentScore;
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-blue-50 flex items-center justify-center p-4">
+        <Card className="w-full max-w-2xl border-2 border-red-100">
+          <CardContent className="p-8 space-y-6">
+            <div className="text-center">
+              {isWinner ? (
+                <div className="w-20 h-20 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Trophy className="w-10 h-10 text-yellow-600" />
+                </div>
+              ) : (
+                <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Star className="w-10 h-10 text-gray-400" />
+                </div>
+              )}
+              <h2 className="text-3xl font-bold mb-2">
+                {playerScore === opponentScore ? "Match nul !" : isWinner ? "Victoire !" : "Défaite"}
+              </h2>
+              <p className="text-gray-600">Partie terminée</p>
+            </div>
+
+            <div className="flex justify-center gap-12 py-6">
+              <div className="text-center">
+                <p className="text-sm text-gray-600 mb-2">{currentPlayer?.pseudo}</p>
+                <p className="text-5xl font-bold text-blue-600">{playerScore}</p>
+              </div>
+              <div className="text-5xl text-gray-300 self-center">-</div>
+              <div className="text-center">
+                <p className="text-sm text-gray-600 mb-2">{opponentPseudo}</p>
+                <p className="text-5xl font-bold text-red-600">{opponentScore}</p>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <Button
+                onClick={() => {
+                  setCurrentGame(null);
+                  setGameState("home");
+                  loadLeaderboard();
+                }}
+                className="flex-1 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800"
+              >
+                <Zap className="mr-2 w-4 h-4" />
+                Nouveau Match
+              </Button>
+              <Button
+                onClick={() => {
+                  setCurrentGame(null);
+                  setGameState("home");
+                  loadLeaderboard();
+                }}
+                variant="outline"
+                className="flex-1"
+              >
+                Accueil
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (gameState === "playing" && currentGame) {
+    const isGiver = currentGame.current_giver_id === currentPlayer?.id;
+    const timePercent = (timeLeft / 60) * 100;
+    const isPlayer1 = currentGame.player1_id === currentPlayer?.id;
+    const playerScore = isPlayer1 ? currentGame.player1_score : currentGame.player2_score;
+    const opponentScore = isPlayer1 ? currentGame.player2_score : currentGame.player1_score;
+    const attemptsLeft = 4 - attempts.length;
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-blue-50 p-4">
+        <div className="max-w-4xl mx-auto space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-2xl font-bold">Round {currentGame.current_round}/4</h2>
+              <p className="text-sm text-gray-600">
+                Vous êtes : <Badge variant={isGiver ? "default" : "secondary"} className={isGiver ? "bg-red-600" : ""}>
+                  {isGiver ? "Donneur" : "Devineur"}
+                </Badge>
+              </p>
+            </div>
+            <div className="text-right">
+              <div className="flex items-center gap-2 text-sm text-gray-600">
+                <User className="w-4 h-4" />
+                <span>vs {opponentPseudo}</span>
+              </div>
+              <div className="text-xl font-bold">
+                <span className="text-blue-600">{playerScore}</span>
+                <span className="text-gray-400 mx-2">-</span>
+                <span className="text-red-600">{opponentScore}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <Card className="border-2 border-red-100">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-5 h-5 text-gray-600" />
+                    <span className="font-semibold text-sm">Temps</span>
+                  </div>
+                  <span className={`text-xl font-bold ${
+                    timeLeft > 30 ? 'text-green-600' :
+                    timeLeft > 10 ? 'text-yellow-600' : 'text-red-600'
+                  }`}>
+                    {timeLeft}s
+                  </span>
+                </div>
+                <Progress value={timePercent} className="h-2" />
+              </CardContent>
+            </Card>
+
+            <Card className="border-2 border-blue-100">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <Target className="w-5 h-5 text-gray-600" />
+                    <span className="font-semibold text-sm">Tentatives</span>
+                  </div>
+                  <span className={`text-xl font-bold ${
+                    attemptsLeft > 2 ? 'text-green-600' :
+                    attemptsLeft > 1 ? 'text-yellow-600' : 'text-red-600'
+                  }`}>
+                    {attemptsLeft}/4
+                  </span>
+                </div>
+                <Progress value={(attempts.length / 4) * 100} className="h-2" />
+              </CardContent>
+            </Card>
+          </div>
+
+          {isGiver ? (
+            <>
+              <Card className="border-2 border-red-100">
+                <CardHeader>
+                  <CardTitle>Votre mot à faire deviner</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-center py-8">
+                    <div className="inline-block bg-gradient-to-r from-red-600 to-blue-600 text-white px-8 py-4 rounded-xl text-4xl font-bold tracking-wider shadow-lg">
+                      {currentGame.current_word}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Historique des tentatives</CardTitle>
+                  <CardDescription>
+                    {attemptsLeft > 0 ? `${attemptsLeft} tentative(s) restante(s)` : "Aucune tentative restante"}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {attempts.map((attempt, index) => (
+                    <div key={index} className="border-2 border-gray-200 rounded-lg p-4">
+                      <div className="flex items-start gap-3 mb-2">
+                        <Badge className="bg-blue-600">#{index + 1}</Badge>
+                        <div className="flex-1">
+                          <p className="text-sm text-gray-600">Votre indice :</p>
+                          <p className="font-semibold">{attempt.clue}</p>
+                        </div>
+                      </div>
+                      {attempt.guess && (
+                        <div className="flex items-center gap-3 mt-2 pt-2 border-t">
+                          {attempt.correct ? (
+                            <Badge className="bg-green-600">✓ Trouvé !</Badge>
+                          ) : (
+                            <Badge variant="destructive">✗ Faux</Badge>
+                          )}
+                          <p className="text-sm">Réponse : <span className="font-medium">{attempt.guess}</span></p>
+                        </div>
+                      )}
+                      {!attempt.guess && (
+                        <div className="mt-2 pt-2 border-t text-sm text-gray-500 italic">
+                          En attente de la réponse...
+                        </div>
+                      )}
+                    </div>
+                  ))}
+
+                  {attemptsLeft > 0 && !waitingForOpponent && !isTransitioning && attempts.length > 0 && attempts[attempts.length - 1].guess && !attempts[attempts.length - 1].correct && (
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={currentClue}
+                        onChange={(e) => setCurrentClue(e.target.value)}
+                        onKeyPress={(e) => e.key === 'Enter' && sendClue()}
+                        placeholder="Donnez un nouvel indice..."
+                        className="flex-1 px-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                        maxLength={50}
+                      />
+                      <Button
+                        onClick={sendClue}
+                        disabled={!currentClue.trim()}
+                        className="bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800"
+                      >
+                        <Send className="w-4 h-4 mr-2" />
+                        Envoyer
+                      </Button>
+                    </div>
+                  )}
+
+                  {attempts.length === 0 && !isTransitioning && (
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={currentClue}
+                        onChange={(e) => setCurrentClue(e.target.value)}
+                        onKeyPress={(e) => e.key === 'Enter' && sendClue()}
+                        placeholder="Donnez votre premier indice..."
+                        className="flex-1 px-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                        maxLength={50}
+                      />
+                      <Button
+                        onClick={sendClue}
+                        disabled={!currentClue.trim()}
+                        className="bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800"
+                      >
+                        <Send className="w-4 h-4 mr-2" />
+                        Envoyer
+                      </Button>
+                    </div>
+                  )}
+
+                  {(waitingForOpponent || isTransitioning) && (
+                    <div className="text-center py-4 text-gray-500">
+                      <div className="animate-pulse flex items-center justify-center gap-2">
+                        <AlertCircle className="w-5 h-5" />
+                        <span>{isTransitioning ? "Passage au round suivant..." : `En attente de ${opponentPseudo}...`}</span>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </>
+          ) : (
+            <>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Historique des tentatives</CardTitle>
+                  <CardDescription>
+                    {attemptsLeft > 0 ? `${attemptsLeft} tentative(s) restante(s)` : "Aucune tentative restante"}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {attempts.length === 0 ? (
+                    <p className="text-center text-gray-500 py-8">
+                      En attente du premier indice de {opponentPseudo}...
+                    </p>
+                  ) : (
+                    attempts.map((attempt, index) => (
+                      <div key={index} className="border-2 border-gray-200 rounded-lg p-4">
+                        <div className="flex items-start gap-3 mb-2">
+                          <Badge className="bg-red-600">#{index + 1}</Badge>
+                          <div className="flex-1">
+                            <p className="text-sm text-gray-600">Indice de {opponentPseudo} :</p>
+                            <p className="font-semibold text-lg">{attempt.clue}</p>
+                          </div>
+                        </div>
+                        {attempt.guess && (
+                          <div className="flex items-center gap-3 mt-2 pt-2 border-t">
+                            {attempt.correct ? (
+                              <Badge className="bg-green-600">✓ Vous avez trouvé !</Badge>
+                            ) : (
+                              <Badge variant="destructive">✗ Raté</Badge>
+                            )}
+                            <p className="text-sm">Votre réponse : <span className="font-medium">{attempt.guess}</span></p>
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+
+                  {attempts.length > 0 && !attempts[attempts.length - 1].guess && !waitingForOpponent && !isTransitioning && (
+                    <Card className="border-2 border-red-100 bg-red-50">
+                      <CardHeader>
+                        <CardTitle className="text-lg">À vous de deviner !</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-3">
+                          <input
+                            type="text"
+                            value={currentGuess}
+                            onChange={(e) => setCurrentGuess(e.target.value.toUpperCase())}
+                            onKeyPress={(e) => e.key === 'Enter' && submitGuess()}
+                            placeholder="VOTRE RÉPONSE..."
+                            className="w-full px-4 py-3 text-lg border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 text-center font-bold uppercase"
+                            maxLength={30}
+                            autoFocus
+                          />
+                          <Button
+                            onClick={submitGuess}
+                            disabled={!currentGuess.trim()}
+                            className="w-full bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800"
+                            size="lg"
+                          >
+                            <Send className="w-5 h-5 mr-2" />
+                            Valider ma réponse
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {(waitingForOpponent || isTransitioning) && (
+                    <div className="text-center py-4 text-gray-500">
+                      <div className="animate-pulse flex items-center justify-center gap-2">
+                        <AlertCircle className="w-5 h-5" />
+                        <span>{isTransitioning ? "Passage au round suivant..." : `En attente de ${opponentPseudo}...`}</span>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return null;
 };
