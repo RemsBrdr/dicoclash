@@ -127,6 +127,7 @@ const DicoClash = () => {
   }, [gameState, timeLeft, isTransitioning]);
 
   const cleanupAll = () => {
+    console.log('🧹 Cleanup');
     if (gameChannel.current) {
       supabase.removeChannel(gameChannel.current);
       gameChannel.current = null;
@@ -370,8 +371,6 @@ const DicoClash = () => {
     if (pollingInterval.current) clearInterval(pollingInterval.current);
 
     pollingInterval.current = setInterval(async () => {
-      if (!isTransitioning) return;
-
       const { data: game } = await supabase
         .from('games')
         .select('*')
@@ -379,15 +378,17 @@ const DicoClash = () => {
         .single();
 
       if (game) {
-        console.log('🔍 Poll check - Round:', game.current_round, 'Last:', lastKnownRound.current);
+        console.log('🔍 Poll - Round:', game.current_round, 'Last:', lastKnownRound.current);
         handleGameUpdate(game);
       }
     }, 1000);
   };
 
   const handleGameUpdate = (newGame: GameData) => {
+    console.log('🔄 handleGameUpdate - Round:', newGame.current_round, 'Last:', lastKnownRound.current);
+
     if (newGame.current_round !== lastKnownRound.current) {
-      console.log('🔄 ROUND CHANGE:', lastKnownRound.current, '→', newGame.current_round);
+      console.log('🎉 ROUND CHANGE:', lastKnownRound.current, '→', newGame.current_round);
       lastKnownRound.current = newGame.current_round;
       updateLock.current = false;
 
@@ -496,7 +497,7 @@ const DicoClash = () => {
       return;
     }
 
-    console.log('🔄 Next round');
+    console.log('🔄 Trigger next round');
 
     if (currentGame.current_round >= 4) {
       console.log('🏁 End');
@@ -508,7 +509,7 @@ const DicoClash = () => {
 
     if (isP1) {
       updateLock.current = true;
-      console.log('👑 P1 update');
+      console.log('👑 P1 update dans 3s');
 
       await new Promise(resolve => setTimeout(resolve, 3000));
 
@@ -516,7 +517,7 @@ const DicoClash = () => {
       const { data: word } = await supabase.rpc('get_random_word');
       const newGiver = currentGame.current_giver_id === currentGame.player1_id ? currentGame.player2_id : currentGame.player1_id;
 
-      console.log('📝 DB update:', nextRound);
+      console.log('📝 UPDATE DB:', nextRound);
 
       await supabase.from('games').update({
         current_round: nextRound,
@@ -529,7 +530,25 @@ const DicoClash = () => {
 
       console.log('✅ Done');
     } else {
-      console.log('👤 P2 wait');
+      console.log('👤 P2 force-check dans 5s');
+
+      // FORCE-CHECK après 5 secondes
+      setTimeout(async () => {
+        console.log('🔍 FORCE CHECK NOW');
+        const { data: game } = await supabase
+          .from('games')
+          .select('*')
+          .eq('id', currentGame.id)
+          .single();
+
+        if (game) {
+          console.log('📊 Fetched:', game.current_round, 'vs', lastKnownRound.current);
+          if (game.current_round !== lastKnownRound.current) {
+            console.log('🎉 CHANGED! Update UI');
+            handleGameUpdate(game);
+          }
+        }
+      }, 5000);
     }
   };
 
