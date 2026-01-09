@@ -347,38 +347,55 @@ const DicoClash = () => {
           const newRound = payload.new;
           console.log('🔍 Données du round:', newRound);
 
-          if (newRound.clues && newRound.clues.length > 0) {
+          // Si c'est un indice (clues existe)
+          if (newRound.clues && newRound.clues.length > 0 && newRound.giver_id) {
             console.log('📝 Indices reçus:', newRound.clues);
-            const lastClue = newRound.clues[newRound.clues.length - 1];
 
-            const existingAttempt = attempts.find(a => a.clue === lastClue);
-            if (!existingAttempt) {
-              console.log('➕ Ajout du nouvel indice:', lastClue);
-              setAttempts(prev => [...prev, { clue: lastClue, guess: '', correct: false }]);
+            // Ne mettre à jour que si c'est l'adversaire qui a donné l'indice
+            if (newRound.giver_id !== currentPlayer?.id) {
+              const lastClue = newRound.clues[newRound.clues.length - 1];
+
+              setAttempts(prev => {
+                // Vérifier si on a déjà cet indice
+                const exists = prev.some(a => a.clue === lastClue);
+                if (exists) {
+                  console.log('⚠️ Indice déjà présent');
+                  return prev;
+                }
+                console.log('➕ Ajout du nouvel indice:', lastClue);
+                return [...prev, { clue: lastClue, guess: '', correct: false }];
+              });
+
               setWaitingForOpponent(false);
-            } else {
-              console.log('⚠️ Indice déjà présent');
             }
           }
 
-          if (newRound.guess_word) {
+          // Si c'est une réponse (guess_word existe)
+          if (newRound.guess_word && newRound.guesser_id) {
             console.log('🎯 Réponse reçue:', newRound.guess_word);
-            setAttempts(prev => {
-              const newAttempts = [...prev];
-              const lastAttempt = newAttempts[newAttempts.length - 1];
-              if (lastAttempt && !lastAttempt.guess) {
-                lastAttempt.guess = newRound.guess_word;
-                lastAttempt.correct = newRound.won || false;
-              }
-              return newAttempts;
-            });
 
-            if (newRound.won) {
-              console.log('✅ Mot trouvé !');
-              setTimeout(() => handleNextRound(), 2000);
-            } else {
-              console.log('❌ Réponse incorrecte');
-              setWaitingForOpponent(false);
+            // Ne mettre à jour que si c'est l'adversaire qui a répondu
+            if (newRound.guesser_id !== currentPlayer?.id) {
+              setAttempts(prev => {
+                const newAttempts = [...prev];
+                const lastAttempt = newAttempts[newAttempts.length - 1];
+
+                // Vérifier que la dernière tentative n'a pas déjà une réponse
+                if (lastAttempt && !lastAttempt.guess) {
+                  lastAttempt.guess = newRound.guess_word;
+                  lastAttempt.correct = newRound.won || false;
+                }
+
+                return newAttempts;
+              });
+
+              if (newRound.won) {
+                console.log('✅ Mot trouvé !');
+                setTimeout(() => handleNextRound(), 2000);
+              } else {
+                console.log('❌ Réponse incorrecte');
+                setWaitingForOpponent(false);
+              }
             }
           }
         }
@@ -490,11 +507,13 @@ const DicoClash = () => {
         status: 'finished'
       }).eq('id', currentGame.id);
     } else {
-      setGameState("waiting");
+      // RESET des tentatives AVANT de changer d'état
       setAttempts([]);
       setCurrentGuess("");
       setCurrentClue("");
       setWaitingForOpponent(false);
+
+      setGameState("waiting");
 
       setTimeout(async () => {
         const nextRound = currentGame.current_round + 1;
