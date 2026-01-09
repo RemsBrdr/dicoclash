@@ -66,6 +66,7 @@ const DicoClash = () => {
   const [error, setError] = useState<string | null>(null);
   const [queueTime, setQueueTime] = useState(0);
   const [timeLeft, setTimeLeft] = useState(60);
+  const [isProcessingRound, setIsProcessingRound] = useState(false);
 
   const heartbeatInterval = useRef<NodeJS.Timeout | null>(null);
   const gameSubscription = useRef<any>(null);
@@ -107,7 +108,7 @@ const DicoClash = () => {
   }, [gameState]);
 
   useEffect(() => {
-    if (gameState === "playing" && timeLeft > 0) {
+    if (gameState === "playing" && timeLeft > 0 && !isProcessingRound) {
       const interval = setInterval(() => {
         setTimeLeft(prev => {
           if (prev <= 1) {
@@ -119,7 +120,7 @@ const DicoClash = () => {
       }, 1000);
       return () => clearInterval(interval);
     }
-  }, [gameState, timeLeft]);
+  }, [gameState, timeLeft, isProcessingRound]);
 
   const startHeartbeat = async () => {
     if (!currentPlayer) return;
@@ -246,8 +247,14 @@ const DicoClash = () => {
           setTimeLeft(60);
           setAttempts([]);
           setWaitingForOpponent(false);
-          subscribeToGame(existingGame.id);
-          setGameState("playing");
+          setIsProcessingRound(false);
+
+          // Attendre 500ms avant de subscribe pour être sûr que tout est prêt
+          setTimeout(() => {
+            subscribeToGame(existingGame.id);
+            setGameState("playing");
+          }, 500);
+
           return;
         }
 
@@ -281,8 +288,13 @@ const DicoClash = () => {
               setTimeLeft(60);
               setAttempts([]);
               setWaitingForOpponent(false);
-              subscribeToGame(match.game_id);
-              setGameState("playing");
+              setIsProcessingRound(false);
+
+              // Attendre 500ms avant de subscribe
+              setTimeout(() => {
+                subscribeToGame(match.game_id);
+                setGameState("playing");
+              }, 500);
             }
           }
         }
@@ -314,7 +326,7 @@ const DicoClash = () => {
     console.log('🔗 Abonnement au jeu:', gameId);
 
     gameSubscription.current = supabase
-      .channel(`game:${gameId}`)
+      .channel(`game:${gameId}:${Date.now()}`)
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
@@ -333,6 +345,7 @@ const DicoClash = () => {
             setCurrentGuess("");
             setWaitingForOpponent(false);
             setTimeLeft(60);
+            setIsProcessingRound(false);
           }
 
           setCurrentGame(gameData);
@@ -342,10 +355,12 @@ const DicoClash = () => {
           }
         }
       })
-      .subscribe();
+      .subscribe((status) => {
+        console.log('📡 Statut subscription game:', status);
+      });
 
     roundsSubscription.current = supabase
-      .channel(`rounds:${gameId}`)
+      .channel(`rounds:${gameId}:${Date.now()}`)
       .on('postgres_changes', {
         event: 'INSERT',
         schema: 'public',
@@ -379,7 +394,7 @@ const DicoClash = () => {
           }
 
           if (newRound.guess_word && newRound.guesser_id) {
-            console.log('🎯 Réponse reçue:', newRound.guess_word);
+            console.log('🎯 Réponse reçue:', newRound.guess_word, 'Won:', newRound.won);
 
             if (newRound.guesser_id !== currentPlayer?.id) {
               setAttempts(prev => {
@@ -395,10 +410,13 @@ const DicoClash = () => {
               });
 
               if (newRound.won) {
-                console.log('✅ Mot trouvé !');
-                setTimeout(() => handleNextRound(), 2000);
+                console.log('✅ Mot trouvé par adversaire !');
+                if (!isProcessingRound) {
+                  setIsProcessingRound(true);
+                  setTimeout(() => handleNextRound(), 2000);
+                }
               } else {
-                console.log('❌ Réponse incorrecte');
+                console.log('❌ Réponse incorrecte de adversaire');
                 setWaitingForOpponent(false);
               }
             }
@@ -406,7 +424,7 @@ const DicoClash = () => {
         }
       })
       .subscribe((status) => {
-        console.log('📡 Statut de l\'abonnement rounds:', status);
+        console.log('📡 Statut subscription rounds:', status);
       });
   };
 
@@ -492,46 +510,70 @@ const DicoClash = () => {
         [isPlayer1 ? 'player1_score' : 'player2_score']: isPlayer1 ? currentGame.player1_score + 1 : currentGame.player2_score + 1
       }).eq('id', currentGame.id);
 
-      setTimeout(() => handleNextRound(), 2000);
+      if (!isProcessingRound) {
+        setIsProcessingRound(true);
+        setTimeout(() => handleNextRound(), 2000);
+      }
     } else if (attempts.length >= 4) {
-      setTimeout(() => handleNextRound(), 2000);
+      if (!isProcessingRound) {
+        setIsProcessingRound(true);
+        setTimeout(() => handleNextRound(), 2000);
+      }
     } else {
       setWaitingForOpponent(false);
     }
   };
 
   const handleTimeOut = () => {
-    handleNextRound();
+    if (!isProcessingRound) {
+      setIsProcessingRound(true);
+      handleNextRound();
+    }
   };
 
   const handleNextRound = async () => {
-    if (!currentGame) return;
+    if (!currentGame || isProcessingRound) return;
+
+    setIsProcessingRound(true);
+    console.log('🔄 handleNextRound appelé, round actuel:', currentGame.current_round);
 
     if (currentGame.current_round >= 4) {
+      console.log('🏁 Fin de partie');
       await supabase.from('games').update({
         status: 'finished'
       }).eq('id', currentGame.id);
     } else {
       setGameState("waiting");
 
-      setTimeout(async () => {
-        const nextRound = currentGame.current_round + 1;
-        const { data: word } = await supabase.rpc('get_random_word');
-        const newGiverId = currentGame.current_giver_id === currentGame.player1_id
-          ? currentGame.player2_id
-          : currentGame.player1_id;
+      // Seulement le player1 met à jour le jeu pour éviter les doublons
+      if (currentGame.player1_id === currentPlayer?.id) {
+        console.log('👑 Player1 met à jour le jeu pour le round suivant');
 
-        await supabase.from('games').update({
-          current_round: nextRound,
-          current_word: word || 'ELEPHANT',
-          current_giver_id: newGiverId,
-          time_left: 60,
-          attempts_used: 0,
-          round_start_time: new Date().toISOString()
-        }).eq('id', currentGame.id);
+        setTimeout(async () => {
+          const nextRound = currentGame.current_round + 1;
+          const { data: word } = await supabase.rpc('get_random_word');
+          const newGiverId = currentGame.current_giver_id === currentGame.player1_id
+            ? currentGame.player2_id
+            : currentGame.player1_id;
 
-        setGameState("playing");
-      }, 3000);
+          await supabase.from('games').update({
+            current_round: nextRound,
+            current_word: word || 'ELEPHANT',
+            current_giver_id: newGiverId,
+            time_left: 60,
+            attempts_used: 0,
+            round_start_time: new Date().toISOString()
+          }).eq('id', currentGame.id);
+
+          setGameState("playing");
+        }, 3000);
+      } else {
+        console.log('👤 Player2 attend la mise à jour du jeu');
+        // Player2 attend juste que la subscription détecte le changement
+        setTimeout(() => {
+          setGameState("playing");
+        }, 3000);
+      }
     }
   };
 
@@ -564,6 +606,9 @@ const DicoClash = () => {
   };
 
   if (!mounted) return null;
+
+  // [TOUS LES ÉTATS UI RESTENT IDENTIQUES - je ne les répète pas pour économiser de l'espace]
+  // Gardez exactement le même code que précédemment pour : login, home, queue, waiting, results, playing
 
   if (gameState === "login") {
     return (
@@ -1275,7 +1320,7 @@ const DicoClash = () => {
                     </div>
                   ))}
 
-                  {attemptsLeft > 0 && !waitingForOpponent && attempts.length > 0 && attempts[attempts.length - 1].guess && !attempts[attempts.length - 1].correct && (
+                  {attemptsLeft > 0 && !waitingForOpponent && !isProcessingRound && attempts.length > 0 && attempts[attempts.length - 1].guess && !attempts[attempts.length - 1].correct && (
                     <div className="flex gap-2">
                       <input
                         type="text"
@@ -1297,7 +1342,7 @@ const DicoClash = () => {
                     </div>
                   )}
 
-                  {attempts.length === 0 && (
+                  {attempts.length === 0 && !isProcessingRound && (
                     <div className="flex gap-2">
                       <input
                         type="text"
@@ -1319,11 +1364,11 @@ const DicoClash = () => {
                     </div>
                   )}
 
-                  {waitingForOpponent && (
+                  {(waitingForOpponent || isProcessingRound) && (
                     <div className="text-center py-4 text-gray-500">
                       <div className="animate-pulse flex items-center justify-center gap-2">
                         <AlertCircle className="w-5 h-5" />
-                        <span>En attente de {opponentPseudo}...</span>
+                        <span>{isProcessingRound ? "Passage au round suivant..." : `En attente de ${opponentPseudo}...`}</span>
                       </div>
                     </div>
                   )}
@@ -1368,7 +1413,7 @@ const DicoClash = () => {
                     ))
                   )}
 
-                  {attempts.length > 0 && !attempts[attempts.length - 1].guess && !waitingForOpponent && (
+                  {attempts.length > 0 && !attempts[attempts.length - 1].guess && !waitingForOpponent && !isProcessingRound && (
                     <Card className="border-2 border-red-100 bg-red-50">
                       <CardHeader>
                         <CardTitle className="text-lg">À vous de deviner !</CardTitle>
@@ -1399,11 +1444,11 @@ const DicoClash = () => {
                     </Card>
                   )}
 
-                  {waitingForOpponent && (
+                  {(waitingForOpponent || isProcessingRound) && (
                     <div className="text-center py-4 text-gray-500">
                       <div className="animate-pulse flex items-center justify-center gap-2">
                         <AlertCircle className="w-5 h-5" />
-                        <span>En attente de {opponentPseudo}...</span>
+                        <span>{isProcessingRound ? "Passage au round suivant..." : `En attente de ${opponentPseudo}...`}</span>
                       </div>
                     </div>
                   )}
