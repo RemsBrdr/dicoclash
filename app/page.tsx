@@ -72,7 +72,7 @@ const DicoClash = () => {
   const gameSubscription = useRef<any>(null);
   const roundsSubscription = useRef<any>(null);
   const matchmakingInterval = useRef<NodeJS.Timeout | null>(null);
-  const processingRoundRef = useRef(false);
+  const lastProcessedRound = useRef(0);
 
   useEffect(() => {
     setMounted(true);
@@ -249,7 +249,7 @@ const DicoClash = () => {
           setAttempts([]);
           setWaitingForOpponent(false);
           setIsTransitioning(false);
-          processingRoundRef.current = false;
+          lastProcessedRound.current = existingGame.current_round;
 
           setTimeout(() => {
             subscribeToGame(existingGame.id);
@@ -290,7 +290,7 @@ const DicoClash = () => {
               setAttempts([]);
               setWaitingForOpponent(false);
               setIsTransitioning(false);
-              processingRoundRef.current = false;
+              lastProcessedRound.current = game.current_round;
 
               setTimeout(() => {
                 subscribeToGame(match.game_id);
@@ -329,34 +329,43 @@ const DicoClash = () => {
     gameSubscription.current = supabase
       .channel(`game:${gameId}:${Date.now()}`)
       .on('postgres_changes', {
-        event: '*',
+        event: 'UPDATE',
         schema: 'public',
         table: 'games',
         filter: `id=eq.${gameId}`
       }, (payload: any) => {
-        console.log('🎮 Mise à jour du jeu:', payload);
+        console.log('🎮 UPDATE reçu:', payload);
         if (payload.new) {
           const gameData = payload.new as GameData;
 
-          if (currentGame && gameData.current_round !== currentGame.current_round) {
-            console.log('🔄 Nouveau round détecté, reset local');
+          // Si le round a changé ET qu'on ne l'a pas encore traité
+          if (gameData.current_round !== lastProcessedRound.current) {
+            console.log('🔄 NOUVEAU ROUND DÉTECTÉ:', gameData.current_round, 'Ancien:', lastProcessedRound.current);
+            lastProcessedRound.current = gameData.current_round;
+
+            // Reset complet
             setAttempts([]);
             setCurrentClue("");
             setCurrentGuess("");
             setWaitingForOpponent(false);
             setTimeLeft(60);
             setIsTransitioning(false);
-            processingRoundRef.current = false;
+            setGameState("playing");
+
+            console.log('✅ Transition vers round', gameData.current_round, 'terminée');
           }
 
           setCurrentGame(gameData);
 
           if (gameData.status === 'finished') {
+            console.log('🏁 Partie terminée');
             handleGameEnd(gameData);
           }
         }
       })
-      .subscribe();
+      .subscribe((status) => {
+        console.log('📡 Statut subscription game:', status);
+      });
 
     roundsSubscription.current = supabase
       .channel(`rounds:${gameId}:${Date.now()}`)
@@ -378,6 +387,7 @@ const DicoClash = () => {
               setAttempts(prev => {
                 const exists = prev.some(a => a.clue === lastClue);
                 if (exists) return prev;
+                console.log('➕ Ajout indice:', lastClue);
                 return [...prev, { clue: lastClue, guess: '', correct: false }];
               });
 
@@ -386,7 +396,7 @@ const DicoClash = () => {
           }
 
           if (newRound.guess_word && newRound.guesser_id) {
-            console.log('🎯 Réponse reçue:', newRound.guess_word, 'Won:', newRound.won);
+            console.log('🎯 Réponse:', newRound.guess_word, 'Won:', newRound.won);
 
             if (newRound.guesser_id !== currentPlayer?.id) {
               setAttempts(prev => {
@@ -401,19 +411,20 @@ const DicoClash = () => {
                 return newAttempts;
               });
 
-              if (newRound.won && !processingRoundRef.current) {
-                console.log('✅ Mot trouvé par adversaire, transition...');
-                processingRoundRef.current = true;
+              if (newRound.won) {
+                console.log('✅ Mot trouvé, déclenchement handleNextRound');
                 setIsTransitioning(true);
                 setTimeout(() => handleNextRound(), 2000);
-              } else if (!newRound.won) {
+              } else {
                 setWaitingForOpponent(false);
               }
             }
           }
         }
       })
-      .subscribe();
+      .subscribe((status) => {
+        console.log('📡 Statut subscription rounds:', status);
+      });
   };
 
   const unsubscribeFromGame = () => {
@@ -435,7 +446,7 @@ const DicoClash = () => {
       return;
     }
 
-    console.log('📤 Envoi de l\'indice:', currentClue.trim());
+    console.log('📤 Envoi indice:', currentClue.trim());
 
     setAttempts(prev => [...prev, { clue: currentClue.trim(), guess: '', correct: false }]);
     setCurrentClue("");
@@ -462,7 +473,7 @@ const DicoClash = () => {
     const guessUpper = currentGuess.trim().toUpperCase();
     const isCorrect = guessUpper === currentGame.current_word;
 
-    console.log('🎯 Envoi de la réponse:', guessUpper, 'Correct:', isCorrect);
+    console.log('🎯 Envoi réponse:', guessUpper, 'Correct:', isCorrect);
 
     setAttempts(prev => {
       const newAttempts = [...prev];
@@ -493,37 +504,31 @@ const DicoClash = () => {
         [isPlayer1 ? 'player1_score' : 'player2_score']: isPlayer1 ? currentGame.player1_score + 1 : currentGame.player2_score + 1
       }).eq('id', currentGame.id);
 
-      if (!processingRoundRef.current) {
-        processingRoundRef.current = true;
-        setIsTransitioning(true);
-        setTimeout(() => handleNextRound(), 2000);
-      }
+      console.log('✅ Mot trouvé par moi, déclenchement handleNextRound');
+      setIsTransitioning(true);
+      setTimeout(() => handleNextRound(), 2000);
     } else if (attempts.length >= 4) {
-      if (!processingRoundRef.current) {
-        processingRoundRef.current = true;
-        setIsTransitioning(true);
-        setTimeout(() => handleNextRound(), 2000);
-      }
+      console.log('❌ 4 tentatives échouées, round suivant');
+      setIsTransitioning(true);
+      setTimeout(() => handleNextRound(), 2000);
     } else {
       setWaitingForOpponent(false);
     }
   };
 
   const handleTimeOut = () => {
-    if (!processingRoundRef.current) {
-      processingRoundRef.current = true;
-      setIsTransitioning(true);
-      handleNextRound();
-    }
+    console.log('⏱️ Timeout, passage au round suivant');
+    setIsTransitioning(true);
+    handleNextRound();
   };
 
   const handleNextRound = async () => {
     if (!currentGame) {
-      console.log('⚠️ Pas de currentGame');
+      console.log('⚠️ handleNextRound: pas de currentGame');
       return;
     }
 
-    console.log('🔄 handleNextRound - Round:', currentGame.current_round, 'Processing:', processingRoundRef.current);
+    console.log('🔄 handleNextRound - Round actuel:', currentGame.current_round);
 
     if (currentGame.current_round >= 4) {
       console.log('🏁 Fin de partie');
@@ -535,9 +540,11 @@ const DicoClash = () => {
 
     setGameState("waiting");
 
-    // Seulement le player1 fait la mise à jour de la BDD
-    if (currentGame.player1_id === currentPlayer?.id) {
-      console.log('👑 Player1 prépare le round suivant');
+    // UNIQUEMENT Player1 met à jour la BDD
+    const isPlayer1 = currentGame.player1_id === currentPlayer?.id;
+
+    if (isPlayer1) {
+      console.log('👑 Player1 - Je mets à jour le jeu');
 
       setTimeout(async () => {
         const nextRound = currentGame.current_round + 1;
@@ -546,9 +553,9 @@ const DicoClash = () => {
           ? currentGame.player2_id
           : currentGame.player1_id;
 
-        console.log('📝 Mise à jour BDD - Round', nextRound, 'Mot:', word);
+        console.log('📝 UPDATE BDD - Round:', nextRound, 'Mot:', word);
 
-        await supabase.from('games').update({
+        const { error } = await supabase.from('games').update({
           current_round: nextRound,
           current_word: word || 'ELEPHANT',
           current_giver_id: newGiverId,
@@ -557,18 +564,14 @@ const DicoClash = () => {
           round_start_time: new Date().toISOString()
         }).eq('id', currentGame.id);
 
-        processingRoundRef.current = false;
-        setIsTransitioning(false);
-        setGameState("playing");
+        if (error) {
+          console.error('❌ Erreur update:', error);
+        } else {
+          console.log('✅ UPDATE BDD réussie');
+        }
       }, 3000);
     } else {
-      console.log('👤 Player2 attend la mise à jour');
-      // Player2 attend la subscription pour détecter le changement
-      setTimeout(() => {
-        processingRoundRef.current = false;
-        setIsTransitioning(false);
-        setGameState("playing");
-      }, 3500);
+      console.log('👤 Player2 - J\'attends l\'update via subscription');
     }
   };
 
@@ -601,8 +604,6 @@ const DicoClash = () => {
   };
 
   if (!mounted) return null;
-
-  // [TOUS LES ÉTATS UI - identiques au code précédent, je garde seulement les parties qui changent]
 
   if (gameState === "login") {
     return (
@@ -695,7 +696,6 @@ const DicoClash = () => {
             </Card>
           </div>
 
-          {/* Reste du code login identique - sections Comment jouer, Règles, etc. */}
           <div className="mb-8 sm:mb-12">
             <h3 className="text-2xl sm:text-3xl font-bold text-center mb-6 sm:mb-8">
               Comment jouer ?
@@ -896,6 +896,9 @@ const DicoClash = () => {
       </div>
     );
   }
+
+  // Les autres états (home, queue, waiting, results, playing) restent IDENTIQUES au code précédent
+  // Je ne les répète pas pour économiser de l'espace, mais gardez-les tels quels
 
   if (gameState === "home") {
     return (
