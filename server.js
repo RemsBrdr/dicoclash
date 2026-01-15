@@ -44,6 +44,9 @@ wss.on('connection', (ws) => {
         case 'join_queue':
           await handleJoinQueue(ws, msg);
           break;
+        case 'leave_queue':
+          handleLeaveQueue(ws, msg);
+          break;
         case 'send_clue':
           handleSendClue(msg);
           break;
@@ -62,27 +65,39 @@ wss.on('connection', (ws) => {
   });
 });
 
+function broadcastQueueSize() {
+  queue.forEach(player => {
+    player.ws.send(JSON.stringify({
+      type: 'queue_update',
+      queueSize: queue.length
+    }));
+  });
+}
+
+function handleLeaveQueue(ws, msg) {
+  const idx = queue.findIndex(p => p.ws === ws);
+  if (idx !== -1) {
+    queue.splice(idx, 1);
+    broadcastQueueSize();
+  }
+}
+
 async function handleJoinQueue(ws, msg) {
   const { playerId, pseudo } = msg;
 
   queue.push({ ws, playerId, pseudo });
   console.log('👥 Queue size:', queue.length);
+  broadcastQueueSize();
 
   if (queue.length >= 2) {
     console.log('🎮 Creating match...');
     const p1 = queue.shift();
     const p2 = queue.shift();
+    broadcastQueueSize();
 
-    console.log('📞 Calling get_random_word...');
-    const { data: word, error: wordError } = await supabase.rpc('get_random_word');
-    if (wordError) {
-      console.error('❌ get_random_word error:', wordError);
-      return;
-    }
-    console.log('✅ Word:', word);
+    const { data: word } = await supabase.rpc('get_random_word');
 
-    console.log('💾 Inserting game...');
-    const { data: game, error: gameError } = await supabase
+    const { data: game } = await supabase
       .from('games')
       .insert({
         player1_id: p1.playerId,
@@ -90,21 +105,14 @@ async function handleJoinQueue(ws, msg) {
         current_word: word || 'ELEPHANT',
         current_giver_id: p1.playerId,
         current_round: 1,
+        player1_score: 0,
+        player2_score: 0,
         status: 'playing'
       })
       .select()
       .single();
 
-    if (gameError) {
-      console.error('❌ Game insert error:', gameError);
-      return;
-    }
-    if (!game) {
-      console.error('❌ No game returned');
-      return;
-    }
-
-    console.log('✅ Game created:', game.id);
+    if (!game) return;
 
     const room = {
       id: game.id,
@@ -113,34 +121,30 @@ async function handleJoinQueue(ws, msg) {
       currentRound: 1,
       currentWord: game.current_word,
       currentGiverId: p1.playerId,
-      player1Score: 0,
-      player2Score: 0,
+      teamScore: 0,
       attempts: [],
       timeLeft: 60
     };
 
     rooms.set(game.id, room);
 
-    console.log('📤 Sending game_start to P1');
     p1.ws.send(JSON.stringify({
       type: 'game_start',
       gameId: game.id,
-      opponentPseudo: p2.pseudo,
+      partnerPseudo: p2.pseudo,
       isGiver: true,
       word: game.current_word,
       round: 1
     }));
 
-    console.log('📤 Sending game_start to P2');
     p2.ws.send(JSON.stringify({
       type: 'game_start',
       gameId: game.id,
-      opponentPseudo: p1.pseudo,
+      partnerPseudo: p1.pseudo,
       isGiver: false,
       round: 1
     }));
 
-    console.log('⏱️ Starting timer');
     startTimer(game.id);
   }
 }
@@ -189,22 +193,12 @@ async function handleSendGuess(msg) {
   });
 
   if (isCorrect) {
-    if (room.currentGiverId === room.player1.id) {
-      room.player1Score++;
-    } else {
-      room.player2Score++;
-    }
+    room.teamScore++;
 
     await supabase.from('games').update({
-      player1_score: room.player1Score,
-      player2_score: room.player2Score
+      player1_score: room.teamScore,
+      player2_score: room.teamScore
     }).eq('id', gameId);
-
-    broadcast(room, {
-      type: 'score_update',
-      myScore: room.currentGiverId === room.player1.id ? room.player1Score : room.player2Score,
-      opponentScore: room.currentGiverId === room.player1.id ? room.player2Score : room.player1Score
-    });
 
     setTimeout(() => nextRound(gameId), 2000);
   } else if (room.attempts.length >= 4) {
@@ -221,21 +215,14 @@ async function nextRound(gameId) {
   if (room.currentRound >= 4) {
     await supabase.from('games').update({
       status: 'finished',
-      player1_score: room.player1Score,
-      player2_score: room.player2Score
+      player1_score: room.teamScore,
+      player2_score: room.teamScore
     }).eq('id', gameId);
 
-    room.player1.ws.send(JSON.stringify({
+    broadcast(room, {
       type: 'game_end',
-      myScore: room.player1Score,
-      opponentScore: room.player2Score
-    }));
-
-    room.player2.ws.send(JSON.stringify({
-      type: 'game_end',
-      myScore: room.player2Score,
-      opponentScore: room.player1Score
-    }));
+      teamScore: room.teamScore
+    });
 
     rooms.delete(gameId);
     return;
@@ -298,14 +285,17 @@ function broadcast(room, data) {
 
 function handleDisconnect(ws) {
   const idx = queue.findIndex(p => p.ws === ws);
-  if (idx !== -1) queue.splice(idx, 1);
+  if (idx !== -1) {
+    queue.splice(idx, 1);
+    broadcastQueueSize();
+  }
 
   for (const [gameId, room] of rooms.entries()) {
     if (room.player1.ws === ws || room.player2.ws === ws) {
       if (room.timer) clearInterval(room.timer);
 
       const other = room.player1.ws === ws ? room.player2 : room.player1;
-      other.ws.send(JSON.stringify({ type: 'opponent_disconnected' }));
+      other.ws.send(JSON.stringify({ type: 'partner_disconnected' }));
 
       rooms.delete(gameId);
     }

@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Swords, LogIn, Users, Send, Loader2, Trophy, Star, Play, TrendingUp, Clock, Target, Zap, Shield, Crown, AlertCircle } from "lucide-react";
+import { Swords, LogIn, Users, Send, Loader2, Trophy, Star, Play, TrendingUp, Target, Shield, Crown, AlertCircle, Zap } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
 interface Attempt {
@@ -13,13 +13,12 @@ interface Attempt {
   correct: boolean;
 }
 
-interface RecentGame {
+interface LeaderboardEntry {
   id: string;
-  player1_pseudo: string;
-  player2_pseudo: string;
-  player1_score: number;
-  player2_score: number;
-  created_at: string;
+  pseudo: string;
+  score_giver: number;
+  total_games: number;
+  games_won: number;
 }
 
 const normalizeString = (str: string) => {
@@ -39,7 +38,7 @@ const DicoClash = () => {
   const [totalGames, setTotalGames] = useState(0);
   const [gamesWon, setGamesWon] = useState(0);
   const [gameId, setGameId] = useState("");
-  const [opponentPseudo, setOpponentPseudo] = useState("");
+  const [partnerPseudo, setPartnerPseudo] = useState("");
   const [isGiver, setIsGiver] = useState(false);
   const [word, setWord] = useState("");
   const [round, setRound] = useState(1);
@@ -47,13 +46,13 @@ const DicoClash = () => {
   const [currentClue, setCurrentClue] = useState("");
   const [currentGuess, setCurrentGuess] = useState("");
   const [timeLeft, setTimeLeft] = useState(60);
-  const [myScore, setMyScore] = useState(0);
-  const [opponentScore, setOpponentScore] = useState(0);
-  const [waitingForOpponent, setWaitingForOpponent] = useState(false);
+  const [teamScore, setTeamScore] = useState(0);
+  const [waitingForPartner, setWaitingForPartner] = useState(false);
   const [loading, setLoading] = useState(false);
   const [onlinePlayers, setOnlinePlayers] = useState(0);
   const [activeGames, setActiveGames] = useState(0);
-  const [recentGames, setRecentGames] = useState<RecentGame[]>([]);
+  const [queueSize, setQueueSize] = useState(0);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [clueError, setClueError] = useState("");
 
   useEffect(() => {
@@ -70,37 +69,38 @@ const DicoClash = () => {
       console.log('📩 Received:', data.type, data);
 
       switch (data.type) {
+        case 'queue_update':
+          setQueueSize(data.queueSize);
+          break;
+
         case 'game_start':
           setGameId(data.gameId);
-          setOpponentPseudo(data.opponentPseudo);
+          setPartnerPseudo(data.partnerPseudo);
           setIsGiver(data.isGiver);
           setWord(data.word || '');
           setRound(data.round);
           setAttempts([]);
           setTimeLeft(60);
-          setMyScore(0);
-          setOpponentScore(0);
+          setTeamScore(0);
           setGameState('playing');
           break;
 
         case 'new_clue':
           setAttempts(data.attempts);
-          setWaitingForOpponent(false);
+          setWaitingForPartner(false);
           break;
 
         case 'clue_sent':
           setAttempts(data.attempts);
-          setWaitingForOpponent(true);
+          setWaitingForPartner(true);
           break;
 
         case 'new_guess':
           setAttempts(data.attempts);
-          setWaitingForOpponent(false);
-          break;
-
-        case 'score_update':
-          setMyScore(data.myScore);
-          setOpponentScore(data.opponentScore);
+          setWaitingForPartner(false);
+          if (data.correct) {
+            setTeamScore(prev => prev + 1);
+          }
           break;
 
         case 'new_round':
@@ -109,7 +109,7 @@ const DicoClash = () => {
           setWord(data.word || '');
           setAttempts([]);
           setTimeLeft(60);
-          setWaitingForOpponent(false);
+          setWaitingForPartner(false);
           break;
 
         case 'timer_update':
@@ -117,14 +117,13 @@ const DicoClash = () => {
           break;
 
         case 'game_end':
-          setMyScore(data.myScore);
-          setOpponentScore(data.opponentScore);
-          updatePlayerStats(data.myScore, data.opponentScore);
+          setTeamScore(data.teamScore);
+          updatePlayerStats(data.teamScore);
           setGameState('results');
           break;
 
-        case 'opponent_disconnected':
-          alert('Adversaire déconnecté');
+        case 'partner_disconnected':
+          alert('Votre complice s\'est déconnecté');
           setGameState('home');
           break;
       }
@@ -161,40 +160,22 @@ const DicoClash = () => {
       .eq('status', 'playing');
     setActiveGames(gamesCount || 0);
 
-    const { data: recent } = await supabase
-      .from('games')
-      .select(`
-        id,
-        player1_score,
-        player2_score,
-        created_at,
-        player1:players!games_player1_id_fkey(pseudo),
-        player2:players!games_player2_id_fkey(pseudo)
-      `)
-      .eq('status', 'finished')
-      .order('created_at', { ascending: false })
+    const { data: topPlayers } = await supabase
+      .from('players')
+      .select('id, pseudo, score_giver, total_games, games_won')
+      .order('score_giver', { ascending: false })
       .limit(10);
 
-    if (recent) {
-      const formatted = recent.map((g: any) => ({
-        id: g.id,
-        player1_pseudo: g.player1?.pseudo || 'Joueur 1',
-        player2_pseudo: g.player2?.pseudo || 'Joueur 2',
-        player1_score: g.player1_score,
-        player2_score: g.player2_score,
-        created_at: g.created_at
-      }));
-      setRecentGames(formatted);
-    }
+    if (topPlayers) setLeaderboard(topPlayers);
   };
 
-  const updatePlayerStats = async (myFinalScore: number, oppFinalScore: number) => {
+  const updatePlayerStats = async (finalScore: number) => {
     if (!playerId) return;
 
-    const wordsFound = myFinalScore;
-    const wordsMissed = 4 - myFinalScore;
+    const wordsFound = finalScore;
+    const wordsMissed = 4 - finalScore;
     const pointsGained = (wordsFound * 25) - (wordsMissed * 10);
-    const isPerfect = myFinalScore === 4;
+    const isPerfect = finalScore === 4;
 
     const { data: player } = await supabase
       .from('players')
@@ -203,13 +184,14 @@ const DicoClash = () => {
       .single();
 
     if (player) {
+      const newScore = player.score_giver + pointsGained;
       await supabase.from('players').update({
-        score_giver: player.score_giver + pointsGained,
+        score_giver: newScore,
         total_games: player.total_games + 1,
         games_won: player.games_won + (isPerfect ? 1 : 0)
       }).eq('id', playerId);
 
-      setPlayerScore(player.score_giver + pointsGained);
+      setPlayerScore(newScore);
       setTotalGames(player.total_games + 1);
       setGamesWon(player.games_won + (isPerfect ? 1 : 0));
     }
@@ -297,7 +279,11 @@ const DicoClash = () => {
     }
 
     if (normalizedWord.substring(0, 3) === normalizedClue.substring(0, 3)) {
-      return "L'indice ne peut pas commencer pareil !";
+      return "Premiers caractères identiques";
+    }
+
+    if (normalizedWord.slice(-3) === normalizedClue.slice(-3) && normalizedClue.length > 3) {
+      return "Derniers caractères identiques";
     }
 
     return "";
@@ -337,46 +323,32 @@ const DicoClash = () => {
   // PAGE WELCOME
   if (gameState === 'welcome') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-blue-50">
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
         <div className="bg-gray-100 border-b border-gray-200 py-2 text-center text-xs text-gray-500">
           Publicité - 728x90
         </div>
 
         <div className="max-w-6xl mx-auto p-4 md:p-8 space-y-8">
-          <div className="text-center py-12 space-y-6">
-            <div className="flex items-center justify-center gap-4 mb-6">
-              <div className="p-4 bg-gradient-to-br from-purple-600 to-blue-600 rounded-3xl shadow-2xl">
-                <Swords className="w-16 h-16 text-white" />
-              </div>
-            </div>
-            <h1 className="text-5xl md:text-7xl font-black bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent">
+          <div className="text-center py-8 space-y-4">
+            <h1 className="text-5xl md:text-7xl font-black text-blue-900 mb-2">
               DicoClash
             </h1>
-            <p className="text-xl md:text-3xl text-gray-700 font-semibold">
-              Le jeu de mots en duel qui fait vibrer !
-            </p>
-            <p className="text-base md:text-lg text-gray-600 max-w-2xl mx-auto">
-              Affrontez des joueurs du monde entier. Donnez des indices, devinez des mots, gagnez des points !
+            <p className="text-lg md:text-xl text-gray-600">
+              Jeu de mots coopératif en ligne
             </p>
 
-            <div className="flex justify-center gap-8 py-6">
+            <div className="flex justify-center gap-6 md:gap-12 py-4 text-sm md:text-base">
               <div className="text-center">
-                <div className="flex items-center justify-center gap-2 text-green-600 text-2xl md:text-3xl font-bold">
-                  <Users className="w-6 h-6 md:w-8 md:h-8" />
-                  {onlinePlayers}
-                </div>
-                <p className="text-xs md:text-sm text-gray-600">En ligne</p>
+                <div className="text-2xl md:text-3xl font-bold text-green-600">{onlinePlayers}</div>
+                <p className="text-gray-600">joueurs en ligne</p>
               </div>
               <div className="text-center">
-                <div className="flex items-center justify-center gap-2 text-purple-600 text-2xl md:text-3xl font-bold">
-                  <Zap className="w-6 h-6 md:w-8 md:h-8" />
-                  {activeGames}
-                </div>
-                <p className="text-xs md:text-sm text-gray-600">Parties en cours</p>
+                <div className="text-2xl md:text-3xl font-bold text-blue-600">{activeGames}</div>
+                <p className="text-gray-600">parties en cours</p>
               </div>
             </div>
 
-            <Card className="max-w-md mx-auto border-2 border-purple-200 shadow-2xl">
+            <Card className="max-w-md mx-auto border-2 border-blue-200 shadow-xl">
               <CardContent className="p-6 space-y-4">
                 <input
                   type="text"
@@ -384,14 +356,14 @@ const DicoClash = () => {
                   onChange={(e) => setPseudo(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
                   placeholder="Entrez votre pseudo..."
-                  className="w-full px-4 py-3 text-lg border-2 border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  className="w-full px-4 py-3 text-lg border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   maxLength={20}
                   disabled={loading}
                 />
                 <Button
                   onClick={handleLogin}
                   disabled={!pseudo.trim() || !ws || ws.readyState !== WebSocket.OPEN || loading}
-                  className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-xl py-6 rounded-xl shadow-lg"
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-xl py-6 rounded-lg"
                 >
                   {loading ? (
                     <>
@@ -401,7 +373,7 @@ const DicoClash = () => {
                   ) : (
                     <>
                       <Play className="mr-2 w-6 h-6" />
-                      Commencer à jouer
+                      Jouer
                     </>
                   )}
                 </Button>
@@ -412,88 +384,83 @@ const DicoClash = () => {
             </Card>
           </div>
 
-          <Card className="border-2 border-blue-200">
-            <CardHeader className="bg-gradient-to-r from-purple-100 to-blue-100">
-              <CardTitle className="text-xl md:text-2xl flex items-center gap-2">
-                <Target className="w-5 h-5 md:w-6 md:h-6 text-purple-600" />
+          <Card className="border-2 border-blue-100">
+            <CardHeader className="bg-blue-50">
+              <CardTitle className="text-xl flex items-center gap-2">
+                <Target className="w-5 h-5 text-blue-600" />
                 Comment jouer ?
               </CardTitle>
             </CardHeader>
-            <CardContent className="p-4 md:p-6">
-              <div className="grid md:grid-cols-2 gap-4 md:gap-6">
-                <div className="space-y-4">
-                  <div className="flex gap-4">
-                    <div className="flex-shrink-0 w-10 h-10 bg-purple-600 text-white rounded-full flex items-center justify-center font-bold">1</div>
+            <CardContent className="p-6">
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="space-y-3">
+                  <div className="flex gap-3">
+                    <div className="flex-shrink-0 w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold text-sm">1</div>
                     <div>
-                      <h3 className="font-bold text-base md:text-lg mb-1">Affrontez un adversaire</h3>
-                      <p className="text-sm text-gray-600">Matchmaking instantané avec un joueur en ligne</p>
+                      <h3 className="font-bold">Trouvez un complice</h3>
+                      <p className="text-sm text-gray-600">Matchmaking automatique</p>
                     </div>
                   </div>
-                  <div className="flex gap-4">
-                    <div className="flex-shrink-0 w-10 h-10 bg-purple-600 text-white rounded-full flex items-center justify-center font-bold">2</div>
+                  <div className="flex gap-3">
+                    <div className="flex-shrink-0 w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold text-sm">2</div>
                     <div>
-                      <h3 className="font-bold text-base md:text-lg mb-1">Donnez des indices</h3>
-                      <p className="text-sm text-gray-600">À tour de rôle, faites deviner un mot secret</p>
+                      <h3 className="font-bold">Donnez des indices</h3>
+                      <p className="text-sm text-gray-600">À tour de rôle, aidez votre complice</p>
                     </div>
                   </div>
                 </div>
-                <div className="space-y-4">
-                  <div className="flex gap-4">
-                    <div className="flex-shrink-0 w-10 h-10 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold">3</div>
+                <div className="space-y-3">
+                  <div className="flex gap-3">
+                    <div className="flex-shrink-0 w-8 h-8 bg-indigo-600 text-white rounded-full flex items-center justify-center font-bold text-sm">3</div>
                     <div>
-                      <h3 className="font-bold text-base md:text-lg mb-1">Devinez vite</h3>
-                      <p className="text-sm text-gray-600">4 tentatives et 60 secondes par mot</p>
+                      <h3 className="font-bold">Trouvez les 4 mots</h3>
+                      <p className="text-sm text-gray-600">4 tentatives par mot, 60 secondes</p>
                     </div>
                   </div>
-                  <div className="flex gap-4">
-                    <div className="flex-shrink-0 w-10 h-10 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold">4</div>
+                  <div className="flex gap-3">
+                    <div className="flex-shrink-0 w-8 h-8 bg-indigo-600 text-white rounded-full flex items-center justify-center font-bold text-sm">4</div>
                     <div>
-                      <h3 className="font-bold text-base md:text-lg mb-1">Gagnez des points</h3>
-                      <p className="text-sm text-gray-600">+25 pts par mot trouvé, -10 pts par mot manqué</p>
+                      <h3 className="font-bold">Gagnez ensemble</h3>
+                      <p className="text-sm text-gray-600">+25 pts par mot, -10 pts si raté</p>
                     </div>
                   </div>
                 </div>
               </div>
 
-              <div className="mt-6 p-4 bg-purple-50 rounded-lg border border-purple-200">
+              <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
                 <p className="text-sm text-gray-700">
-                  <Shield className="inline w-4 h-4 mr-1 text-purple-600" />
-                  <strong>Règle importante :</strong> Vous ne pouvez pas donner le mot lui-même ou un mot trop similaire en indice !
+                  <Shield className="inline w-4 h-4 mr-1 text-blue-600" />
+                  <strong>Important :</strong> Les indices ne doivent pas être trop proches du mot à deviner !
                 </p>
               </div>
             </CardContent>
           </Card>
 
-          <Card className="border-2 border-green-200">
-            <CardHeader className="bg-gradient-to-r from-green-100 to-blue-100">
-              <CardTitle className="text-xl md:text-2xl flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 md:w-6 md:h-6 text-green-600" />
-                Dernières parties
+          <Card className="border-2 border-green-100">
+            <CardHeader className="bg-green-50">
+              <CardTitle className="text-xl flex items-center gap-2">
+                <Trophy className="w-5 h-5 text-green-600" />
+                Classement
               </CardTitle>
             </CardHeader>
-            <CardContent className="p-4 md:p-6">
-              {recentGames.length === 0 ? (
-                <p className="text-center text-gray-500 py-8">Aucune partie récente</p>
+            <CardContent className="p-6">
+              {leaderboard.length === 0 ? (
+                <p className="text-center text-gray-500 py-4">Chargement...</p>
               ) : (
                 <div className="space-y-2">
-                  {recentGames.map((game) => (
-                    <div key={game.id} className="flex flex-col md:flex-row justify-between items-start md:items-center gap-2 p-3 bg-gray-50 rounded-lg border">
-                      <div className="flex items-center gap-2 md:gap-3 flex-wrap">
-                        <Trophy className="w-4 h-4 md:w-5 md:h-5 text-yellow-600" />
-                        <span className="font-semibold text-sm md:text-base">{game.player1_pseudo}</span>
-                        <span className="text-xl md:text-2xl font-bold text-purple-600">{game.player1_score}</span>
-                        <span className="text-gray-400">-</span>
-                        <span className="text-xl md:text-2xl font-bold text-blue-600">{game.player2_score}</span>
-                        <span className="font-semibold text-sm md:text-base">{game.player2_pseudo}</span>
+                  {leaderboard.map((player, index) => (
+                    <div key={player.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg border">
+                      <div className="flex items-center gap-3">
+                        {index === 0 && <Crown className="w-5 h-5 text-yellow-600" />}
+                        {index === 1 && <Star className="w-5 h-5 text-gray-400" />}
+                        {index === 2 && <Star className="w-5 h-5 text-amber-700" />}
+                        <span className="font-bold text-gray-600">#{index + 1}</span>
+                        <span className="font-semibold">{player.pseudo}</span>
                       </div>
-                      <span className="text-xs text-gray-500">
-                        {new Date(game.created_at).toLocaleString('fr-FR', {
-                          day: '2-digit',
-                          month: '2-digit',
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })}
-                      </span>
+                      <div className="text-right">
+                        <div className="text-xl font-bold text-blue-600">{player.score_giver}</div>
+                        <div className="text-xs text-gray-500">{player.total_games} parties</div>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -502,16 +469,16 @@ const DicoClash = () => {
           </Card>
 
           <div className="grid md:grid-cols-2 gap-4">
-            <div className="bg-gray-100 border border-gray-200 rounded-lg p-8 text-center text-xs text-gray-500">
+            <div className="bg-gray-100 border rounded-lg p-8 text-center text-xs text-gray-500">
               Publicité - 300x250
             </div>
-            <div className="bg-gray-100 border border-gray-200 rounded-lg p-8 text-center text-xs text-gray-500">
+            <div className="bg-gray-100 border rounded-lg p-8 text-center text-xs text-gray-500">
               Publicité - 300x250
             </div>
           </div>
         </div>
 
-        <div className="bg-gray-100 border-t border-gray-200 py-2 text-center text-xs text-gray-500 mt-8">
+        <div className="bg-gray-100 border-t py-2 text-center text-xs text-gray-500 mt-8">
           Publicité - 728x90
         </div>
       </div>
@@ -521,39 +488,39 @@ const DicoClash = () => {
   // PAGE HOME
   if (gameState === 'home') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-blue-50">
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
         <div className="bg-gray-100 border-b py-2 text-center text-xs text-gray-500">
           Publicité - 728x90
         </div>
 
         <div className="max-w-4xl mx-auto p-4 md:p-8 space-y-6">
           <div className="text-center">
-            <h1 className="text-3xl md:text-4xl font-black bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent mb-2">
+            <h1 className="text-3xl md:text-4xl font-black text-blue-900 mb-2">
               Bienvenue, {pseudo} !
             </h1>
-            <Badge variant="outline" className="text-base md:text-lg px-4 py-1">
+            <Badge variant="outline" className="text-lg px-4 py-1">
               <Crown className="w-4 h-4 mr-2 text-yellow-600" />
-              Score : {playerScore} pts
+              {playerScore} points
             </Badge>
           </div>
 
-          <Card className="border-2 border-purple-200 shadow-xl">
-            <CardContent className="p-6 md:p-8 text-center space-y-4">
-              <h2 className="text-2xl md:text-3xl font-bold">Prêt pour un duel ?</h2>
+          <Card className="border-2 border-blue-200 shadow-xl">
+            <CardContent className="p-8 text-center space-y-4">
+              <h2 className="text-2xl font-bold">Rechercher un complice ?</h2>
               <Button
                 onClick={joinQueue}
-                className="text-xl md:text-2xl px-12 md:px-16 py-6 md:py-8 h-auto bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 rounded-xl shadow-lg"
+                className="text-xl px-16 py-8 h-auto bg-blue-600 hover:bg-blue-700 rounded-lg"
               >
-                <Play className="mr-2 md:mr-3 w-6 h-6 md:w-8 md:h-8" />
+                <Play className="mr-3 w-8 h-8" />
                 Lancer une partie
               </Button>
               <div className="flex justify-center gap-8 mt-4">
                 <div className="text-center">
-                  <div className="text-green-600 text-xl md:text-2xl font-bold">{onlinePlayers}</div>
+                  <div className="text-green-600 text-2xl font-bold">{onlinePlayers}</div>
                   <p className="text-xs text-gray-600">En ligne</p>
                 </div>
                 <div className="text-center">
-                  <div className="text-purple-600 text-xl md:text-2xl font-bold">{activeGames}</div>
+                  <div className="text-blue-600 text-2xl font-bold">{activeGames}</div>
                   <p className="text-xs text-gray-600">Parties en cours</p>
                 </div>
               </div>
@@ -561,28 +528,71 @@ const DicoClash = () => {
           </Card>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Card>
+            <Card className="bg-gray-50">
               <CardContent className="p-6 text-center">
-                <Trophy className="w-10 h-10 md:w-12 md:h-12 mx-auto mb-2 text-yellow-600" />
-                <p className="text-2xl md:text-3xl font-bold">{totalGames}</p>
-                <p className="text-xs md:text-sm text-gray-600">Parties jouées</p>
+                <Trophy className="w-12 h-12 mx-auto mb-2 text-yellow-600" />
+                <p className="text-3xl font-bold">{totalGames}</p>
+                <p className="text-sm text-gray-600">Parties</p>
               </CardContent>
             </Card>
-            <Card>
+            <Card className="bg-gray-50">
               <CardContent className="p-6 text-center">
-                <Star className="w-10 h-10 md:w-12 md:h-12 mx-auto mb-2 text-green-600" />
-                <p className="text-2xl md:text-3xl font-bold">{gamesWon}</p>
-                <p className="text-xs md:text-sm text-gray-600">Victoires parfaites</p>
+                <Star className="w-12 h-12 mx-auto mb-2 text-green-600" />
+                <p className="text-3xl font-bold">{gamesWon}</p>
+                <p className="text-sm text-gray-600">Victoires</p>
               </CardContent>
             </Card>
-            <Card>
+            <Card className="bg-gray-50">
               <CardContent className="p-6 text-center">
-                <TrendingUp className="w-10 h-10 md:w-12 md:h-12 mx-auto mb-2 text-purple-600" />
-                <p className="text-2xl md:text-3xl font-bold">{playerScore}</p>
-                <p className="text-xs md:text-sm text-gray-600">Score total</p>
+                <Zap className="w-12 h-12 mx-auto mb-2 text-blue-600" />
+                <p className="text-3xl font-bold">{playerScore}</p>
+                <p className="text-sm text-gray-600">Score</p>
               </CardContent>
             </Card>
           </div>
+
+          <Card className="border-2 border-blue-100">
+            <CardHeader className="bg-blue-50">
+              <CardTitle className="flex items-center gap-2">
+                <Target className="w-5 h-5 text-blue-600" />
+                Règles
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-4 space-y-2 text-sm">
+              <p>🎯 Trouvez les 4 mots avec votre complice</p>
+              <p>🔄 4 tentatives maximum par mot</p>
+              <p>⏱️ 60 secondes par mot</p>
+              <p>✅ +25 points par mot trouvé</p>
+              <p>❌ -10 points par mot raté</p>
+            </CardContent>
+          </Card>
+
+          <Card className="border-2 border-green-100">
+            <CardHeader className="bg-green-50">
+              <CardTitle className="flex items-center gap-2">
+                <Trophy className="w-5 h-5 text-green-600" />
+                Classement
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-4">
+              {leaderboard.length === 0 ? (
+                <p className="text-center text-gray-500 py-4">Chargement...</p>
+              ) : (
+                <div className="space-y-2">
+                  {leaderboard.slice(0, 5).map((player, index) => (
+                    <div key={player.id} className={`flex justify-between items-center p-2 rounded ${player.id === playerId ? 'bg-blue-100 border border-blue-300' : 'bg-gray-50'}`}>
+                      <div className="flex items-center gap-2">
+                        {index === 0 && <Crown className="w-4 h-4 text-yellow-600" />}
+                        <span className="font-bold text-gray-600 text-sm">#{index + 1}</span>
+                        <span className="font-semibold text-sm">{player.pseudo}</span>
+                      </div>
+                      <div className="text-blue-600 font-bold">{player.score_giver}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           <div className="grid md:grid-cols-2 gap-4">
             <div className="bg-gray-100 border rounded-lg p-8 text-center text-xs text-gray-500">
@@ -609,18 +619,28 @@ const DicoClash = () => {
   // PAGE QUEUE
   if (gameState === 'queue') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-blue-50 flex items-center justify-center p-4">
-        <Card className="w-full max-w-md border-2 border-purple-100">
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md border-2 border-blue-100">
           <CardContent className="p-8 text-center space-y-6">
-            <div className="w-20 h-20 bg-purple-100 rounded-full flex items-center justify-center mx-auto">
-              <Users className="w-10 h-10 text-purple-600 animate-pulse" />
+            <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto">
+              <Users className="w-10 h-10 text-blue-600 animate-pulse" />
             </div>
             <div>
-              <h2 className="text-2xl font-bold">Recherche d'adversaire...</h2>
-              <p className="text-gray-600">Matchmaking en cours</p>
+              <h2 className="text-2xl font-bold">Recherche d'un complice...</h2>
+              <p className="text-gray-600 mt-2">
+                <b>{queueSize}</b> joueur{queueSize > 1 ? 's' : ''} dans la file
+              </p>
+              <p className="text-sm text-gray-500">
+                <b>{activeGames}</b> parties en cours
+              </p>
             </div>
-            <Loader2 className="w-8 h-8 mx-auto animate-spin text-purple-600" />
-            <p className="text-sm text-gray-500">{onlinePlayers} joueurs en ligne</p>
+            <Loader2 className="w-8 h-8 mx-auto animate-spin text-blue-600" />
+            <Button variant="outline" onClick={() => {
+              if (ws) ws.send(JSON.stringify({ type: 'leave_queue', playerId }));
+              setGameState('home');
+            }}>
+              Annuler
+            </Button>
           </CardContent>
         </Card>
       </div>
@@ -632,38 +652,36 @@ const DicoClash = () => {
     const attemptsLeft = 4 - attempts.length;
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-blue-50 p-2 md:p-4">
-        <div className="max-w-5xl mx-auto space-y-3 md:space-y-4">
-          <Card className="border-2 border-purple-100">
-            <CardContent className="p-3 md:p-4">
-              <div className="flex justify-between items-center">
-                <div>
-                  <h2 className="text-xl md:text-2xl font-bold">Round {round}/4</h2>
-                  <Badge variant={isGiver ? "default" : "secondary"} className={isGiver ? "bg-purple-600 mt-1" : "mt-1"}>
-                    {isGiver ? "🎯 Donneur" : "🔍 Devineur"}
-                  </Badge>
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 p-2 md:p-4">
+        <div className="max-w-5xl mx-auto space-y-3">
+          <div className="bg-blue-600 text-white p-3 md:p-4 rounded-lg border-2 border-blue-700">
+            <div className="flex justify-between items-center">
+              <div>
+                <div className="text-lg md:text-xl font-bold">Manche {round}/4</div>
+                <Badge variant="secondary" className={isGiver ? "bg-blue-800" : "bg-indigo-800"}>
+                  {isGiver ? "Vous faites deviner" : "Vous devinez"}
+                </Badge>
+              </div>
+              <div className="text-right">
+                <div className="text-sm">Complice : <b>{partnerPseudo}</b></div>
+                <div className="text-2xl md:text-3xl font-black">
+                  {teamScore}/4
                 </div>
-                <div className="text-right">
-                  <p className="text-xs md:text-sm">vs {opponentPseudo}</p>
-                  <p className="text-lg md:text-2xl font-bold">
-                    <span className="text-purple-600">{myScore}</span> - <span className="text-blue-600">{opponentScore}</span>
-                  </p>
-                  <p className={`text-xl md:text-2xl font-bold ${timeLeft > 30 ? 'text-green-600' : timeLeft > 10 ? 'text-yellow-600' : 'text-red-600'}`}>
-                    {timeLeft}s
-                  </p>
+                <div className={`text-xl font-bold ${timeLeft > 30 ? 'text-green-300' : timeLeft > 10 ? 'text-yellow-300' : 'text-red-300'}`}>
+                  {timeLeft}s
                 </div>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
 
           {isGiver && (
-            <Card className="border-2 border-purple-100">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-center text-lg md:text-xl">Votre mot</CardTitle>
+            <Card className="border-2 border-blue-200 bg-blue-50">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-center">Faites deviner</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-center py-6 md:py-12">
-                  <div className="inline-block bg-gradient-to-r from-purple-600 to-blue-600 text-white px-6 md:px-12 py-4 md:py-6 rounded-2xl text-3xl md:text-5xl font-black">
+                <div className="text-center py-6 md:py-8">
+                  <div className="inline-block bg-blue-600 text-white px-8 md:px-12 py-4 md:py-6 rounded-xl text-3xl md:text-5xl font-black">
                     {word}
                   </div>
                 </div>
@@ -671,101 +689,105 @@ const DicoClash = () => {
             </Card>
           )}
 
-          <Card className="border-2 border-gray-100">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base md:text-lg">Historique</CardTitle>
-              <p className="text-xs md:text-sm text-gray-600">{attemptsLeft} tentative(s) restante(s)</p>
-            </CardHeader>
-            <CardContent className="space-y-2 md:space-y-3">
-              {attempts.length === 0 && (
-                <div className="text-center py-6 md:py-8 text-gray-500 text-sm md:text-base">
-                  {isGiver ? "Donnez le premier indice" : `En attente de ${opponentPseudo}...`}
-                </div>
-              )}
-
-              {attempts.map((att, i) => (
-                <div key={i} className="border-2 rounded-xl p-3 md:p-4 bg-gray-50">
-                  <div className="flex gap-2 md:gap-3 mb-2">
-                    <Badge className="text-xs md:text-sm">#{i + 1}</Badge>
-                    <div className="flex-1">
-                      <p className="text-xs md:text-sm text-gray-600">Indice :</p>
-                      <p className="font-bold text-base md:text-lg">{att.clue}</p>
-                    </div>
+          <div className="grid md:grid-cols-2 gap-3">
+            <Card className="border-2 border-blue-100">
+              <CardHeader className="pb-2 bg-blue-50">
+                <CardTitle className="text-base">
+                  {!isGiver && <span className="text-blue-600">→ </span>}
+                  Indices
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-3 space-y-2">
+                {attempts.map((att, i) => (
+                  <div key={i} className={`p-2 rounded ${i % 2 === 0 ? 'bg-blue-50' : 'bg-white'} border`}>
+                    <p className="font-bold">{att.clue}</p>
                   </div>
-                  {att.guess && (
-                    <div className="flex gap-2 md:gap-3 mt-2 md:mt-3 pt-2 md:pt-3 border-t">
-                      <Badge variant={att.correct ? "default" : "destructive"} className={att.correct ? "bg-green-600" : ""}>
-                        {att.correct ? "✓" : "✗"}
-                      </Badge>
-                      <p className="text-sm md:text-base"><b>{att.guess}</b></p>
-                    </div>
-                  )}
-                  {!att.guess && <p className="text-xs md:text-sm text-gray-500 italic mt-2 pt-2 border-t">En attente de réponse...</p>}
-                </div>
-              ))}
+                ))}
+                {attempts.length === 0 && <p className="text-center text-gray-400 py-4 text-sm">Aucun indice</p>}
+              </CardContent>
+            </Card>
 
-              {isGiver && attemptsLeft > 0 && !waitingForOpponent && (
-                (attempts.length === 0 || (attempts[attempts.length - 1].guess && !attempts[attempts.length - 1].correct)) && (
-                  <Card className="border-2 border-purple-100 bg-purple-50">
-                    <CardContent className="p-3 md:p-4">
-                      {clueError && (
-                        <div className="mb-3 p-2 bg-red-100 border border-red-300 rounded-lg flex items-center gap-2">
-                          <AlertCircle className="w-4 h-4 text-red-600" />
-                          <p className="text-sm text-red-700">{clueError}</p>
-                        </div>
-                      )}
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={currentClue}
-                          onChange={(e) => setCurrentClue(e.target.value)}
-                          onKeyPress={(e) => e.key === 'Enter' && sendClue()}
-                          placeholder="Votre indice..."
-                          className="flex-1 px-3 md:px-4 py-2 md:py-3 border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm md:text-base"
-                          maxLength={50}
-                          autoFocus
-                        />
-                        <Button onClick={sendClue} disabled={!currentClue.trim()} className="bg-purple-600 px-4 md:px-6">
-                          <Send className="w-4 h-4 md:w-5 md:h-5" />
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                )
-              )}
+            <Card className="border-2 border-indigo-100">
+              <CardHeader className="pb-2 bg-indigo-50">
+                <CardTitle className="text-base">
+                  Réponses
+                  {isGiver && <span className="text-indigo-600"> ←</span>}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-3 space-y-2">
+                {attempts.map((att, i) => (
+                  <div key={i} className={`p-2 rounded ${att.correct ? 'bg-green-100 border-green-300' : 'bg-red-50 border-red-200'} border`}>
+                    <p className="font-bold">{att.guess || '...'}</p>
+                  </div>
+                ))}
+                {attempts.length === 0 && <p className="text-center text-gray-400 py-4 text-sm">Aucune réponse</p>}
+              </CardContent>
+            </Card>
+          </div>
 
-              {!isGiver && attempts.length > 0 && !attempts[attempts.length - 1].guess && (
-                <Card className="border-2 border-blue-100 bg-blue-50">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-base md:text-lg">À vous de deviner !</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2 md:space-y-3">
+          {clueError && (
+            <div className="p-3 bg-red-100 border-2 border-red-300 rounded-lg flex items-center gap-2">
+              <AlertCircle className="w-5 h-5 text-red-600" />
+              <p className="text-sm font-semibold text-red-700">{clueError}</p>
+            </div>
+          )}
+
+          {isGiver && attemptsLeft > 0 && !waitingForPartner && (
+            (attempts.length === 0 || (attempts[attempts.length - 1].guess && !attempts[attempts.length - 1].correct)) && (
+              <Card className="border-2 border-blue-200">
+                <CardContent className="p-4">
+                  <form onSubmit={(e) => { e.preventDefault(); sendClue(); }} className="flex gap-2">
                     <input
                       type="text"
-                      value={currentGuess}
-                      onChange={(e) => setCurrentGuess(e.target.value.toUpperCase())}
-                      onKeyPress={(e) => e.key === 'Enter' && sendGuess()}
-                      placeholder="RÉPONSE..."
-                      className="w-full px-3 md:px-4 py-3 md:py-4 border-2 rounded-xl text-center font-black text-xl md:text-2xl uppercase focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      maxLength={30}
+                      value={currentClue}
+                      onChange={(e) => setCurrentClue(e.target.value)}
+                      placeholder="Votre indice..."
+                      className="flex-1 px-4 py-3 border-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      maxLength={50}
                       autoFocus
+                      required
                     />
-                    <Button onClick={sendGuess} disabled={!currentGuess.trim()} className="w-full bg-blue-600 py-3 md:py-4">
-                      <Send className="mr-2 w-4 h-4 md:w-5 md:h-5" />
-                      Valider
+                    <Button type="submit" disabled={!currentClue.trim()} className="bg-blue-600 px-6">
+                      <Send className="w-5 h-5" />
                     </Button>
-                  </CardContent>
-                </Card>
-              )}
+                  </form>
+                </CardContent>
+              </Card>
+            )
+          )}
 
-              {waitingForOpponent && (
-                <div className="text-center py-4 md:py-6">
-                  <Loader2 className="w-5 h-5 md:w-6 md:h-6 mx-auto mb-2 animate-spin" />
-                  <p className="text-sm md:text-base text-gray-600">En attente de {opponentPseudo}...</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          {!isGiver && attempts.length > 0 && !attempts[attempts.length - 1].guess && !waitingForPartner && (
+            <Card className="border-2 border-indigo-200">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-lg">À vous de deviner !</CardTitle>
+              </CardHeader>
+              <CardContent className="p-4 space-y-3">
+                <form onSubmit={(e) => { e.preventDefault(); sendGuess(); }}>
+                  <input
+                    type="text"
+                    value={currentGuess}
+                    onChange={(e) => setCurrentGuess(e.target.value.toUpperCase())}
+                    placeholder="RÉPONSE..."
+                    className="w-full px-4 py-4 border-2 rounded-lg text-center font-black text-2xl uppercase focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    maxLength={30}
+                    autoFocus
+                    required
+                  />
+                  <Button type="submit" disabled={!currentGuess.trim()} className="w-full bg-indigo-600 py-4 mt-3">
+                    <Send className="mr-2" />
+                    Envoyer
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
+          )}
+
+          {waitingForPartner && (
+            <div className="text-center py-6">
+              <Loader2 className="w-6 h-6 mx-auto mb-2 animate-spin text-blue-600" />
+              <p className="text-gray-600">En attente de {partnerPseudo}...</p>
+            </div>
+          )}
 
           <div className="bg-gray-100 border rounded-lg p-4 text-center text-xs text-gray-500">
             Publicité - 728x90
@@ -777,64 +799,63 @@ const DicoClash = () => {
 
   // PAGE RESULTS
   if (gameState === 'results') {
-    const isPerfect = myScore === 4;
-    const won = myScore > opponentScore;
-    const wordsFound = myScore;
-    const wordsMissed = 4 - myScore;
+    const isPerfect = teamScore === 4;
+    const wordsFound = teamScore;
+    const wordsMissed = 4 - teamScore;
     const pointsGained = (wordsFound * 25) - (wordsMissed * 10);
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-blue-50 flex items-center justify-center p-4">
-        <Card className="w-full max-w-2xl border-2 border-purple-100">
-          <CardContent className="p-6 md:p-8 space-y-6">
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center p-4">
+        <Card className="w-full max-w-2xl border-2 border-blue-100">
+          <CardContent className="p-8 space-y-6">
             <div className="text-center">
               {isPerfect ? (
-                <div className="w-20 h-20 md:w-24 md:h-24 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Crown className="w-10 h-10 md:w-12 md:h-12 text-yellow-600" />
+                <div className="w-24 h-24 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Crown className="w-12 h-12 text-yellow-600" />
                 </div>
-              ) : won ? (
-                <div className="w-20 h-20 md:w-24 md:h-24 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Trophy className="w-10 h-10 md:w-12 md:h-12 text-green-600" />
+              ) : teamScore >= 2 ? (
+                <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Trophy className="w-12 h-12 text-green-600" />
                 </div>
               ) : (
-                <div className="w-20 h-20 md:w-24 md:h-24 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Star className="w-10 h-10 md:w-12 md:h-12 text-gray-400" />
+                <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Star className="w-12 h-12 text-gray-400" />
                 </div>
               )}
-              <h2 className="text-3xl md:text-4xl font-bold">
-                {isPerfect ? "VICTOIRE PARFAITE !" : won ? "Bien joué !" : "Dommage !"}
+              <h2 className="text-4xl font-bold">
+                {isPerfect ? "VICTOIRE PARFAITE !" : teamScore >= 2 ? "Bien joué !" : "Dommage..."}
               </h2>
+              <p className="text-gray-600 mt-2">Avec {partnerPseudo}</p>
             </div>
 
-            <div className="flex justify-center gap-8 md:gap-16 py-6 md:py-8">
-              <div className="text-center">
-                <p className="text-xs md:text-sm mb-2">{pseudo}</p>
-                <p className="text-4xl md:text-6xl font-bold text-purple-600">{myScore}</p>
-              </div>
-              <div className="text-4xl md:text-6xl text-gray-300">-</div>
-              <div className="text-center">
-                <p className="text-xs md:text-sm mb-2">{opponentPseudo}</p>
-                <p className="text-4xl md:text-6xl font-bold text-blue-600">{opponentScore}</p>
-              </div>
+            <div className="text-center py-6">
+              <div className="text-7xl font-black text-blue-600">{teamScore}/4</div>
+              <p className="text-gray-600 mt-2">Mots trouvés</p>
             </div>
 
-            <div className="bg-gray-50 rounded-lg p-4 md:p-6 border">
-              <h3 className="font-bold text-base md:text-lg mb-3">Récapitulatif</h3>
+            <div className="bg-gray-50 rounded-lg p-6 border">
+              <h3 className="font-bold text-lg mb-3">Récapitulatif</h3>
               <div className="space-y-2">
-                <div className="flex justify-between text-sm md:text-base">
+                <div className="flex justify-between">
                   <span>Mots trouvés :</span>
                   <span className="font-bold text-green-600">+{wordsFound * 25} pts</span>
                 </div>
-                <div className="flex justify-between text-sm md:text-base">
+                <div className="flex justify-between">
                   <span>Mots manqués :</span>
                   <span className="font-bold text-red-600">-{wordsMissed * 10} pts</span>
                 </div>
                 <div className="border-t pt-2 mt-2">
-                  <div className="flex justify-between text-base md:text-lg font-bold">
+                  <div className="flex justify-between text-lg font-bold">
                     <span>Total :</span>
                     <span className={pointsGained >= 0 ? 'text-green-600' : 'text-red-600'}>
                       {pointsGained >= 0 ? '+' : ''}{pointsGained} pts
                     </span>
+                  </div>
+                </div>
+                <div className="border-t pt-2 mt-2 bg-blue-50 -mx-6 px-6 py-2 rounded">
+                  <div className="flex justify-between text-xl font-bold">
+                    <span>Nouveau score :</span>
+                    <span className="text-blue-600">{playerScore} pts</span>
                   </div>
                 </div>
               </div>
@@ -842,12 +863,12 @@ const DicoClash = () => {
 
             <Button onClick={() => {
               setGameState('home');
-            }} className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-lg md:text-xl py-5 md:py-6">
-              <Play className="mr-2 w-5 h-5 md:w-6 md:h-6" />
-              Rejouer
+            }} className="w-full bg-blue-600 hover:bg-blue-700 text-xl py-6">
+              <Play className="mr-2 w-6 h-6" />
+              Retour à l'accueil
             </Button>
 
-            <div className="bg-gray-100 border rounded-lg p-6 md:p-8 text-center text-xs text-gray-500">
+            <div className="bg-gray-100 border rounded-lg p-8 text-center text-xs text-gray-500">
               Publicité - 468x60
             </div>
           </CardContent>
