@@ -65,11 +65,20 @@ async function handleJoinQueue(ws, msg) {
   console.log('👥 Queue size:', queue.length);
 
   if (queue.length >= 2) {
+    console.log('🎮 Creating match...');
     const p1 = queue.shift();
     const p2 = queue.shift();
 
-    const { data: word } = await supabase.rpc('get_random_word');
-    const { data: game } = await supabase
+    console.log('📞 Calling get_random_word...');
+    const { data: word, error: wordError } = await supabase.rpc('get_random_word');
+    if (wordError) {
+      console.error('❌ get_random_word error:', wordError);
+      return;
+    }
+    console.log('✅ Word:', word);
+
+    console.log('💾 Inserting game...');
+    const { data: game, error: gameError } = await supabase
       .from('games')
       .insert({
         player1_id: p1.playerId,
@@ -82,7 +91,16 @@ async function handleJoinQueue(ws, msg) {
       .select()
       .single();
 
-    if (!game) return;
+    if (gameError) {
+      console.error('❌ Game insert error:', gameError);
+      return;
+    }
+    if (!game) {
+      console.error('❌ No game returned');
+      return;
+    }
+
+    console.log('✅ Game created:', game.id);
 
     const room = {
       id: game.id,
@@ -99,6 +117,7 @@ async function handleJoinQueue(ws, msg) {
 
     rooms.set(game.id, room);
 
+    console.log('📤 Sending game_start to P1');
     p1.ws.send(JSON.stringify({
       type: 'game_start',
       gameId: game.id,
@@ -108,6 +127,7 @@ async function handleJoinQueue(ws, msg) {
       round: 1
     }));
 
+    console.log('📤 Sending game_start to P2');
     p2.ws.send(JSON.stringify({
       type: 'game_start',
       gameId: game.id,
@@ -116,6 +136,7 @@ async function handleJoinQueue(ws, msg) {
       round: 1
     }));
 
+    console.log('⏱️ Starting timer');
     startTimer(game.id);
   }
 }
