@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +34,7 @@ const DicoClash = () => {
   const [pseudo, setPseudo] = useState("");
   const [ws, setWs] = useState<WebSocket | null>(null);
   const [playerId, setPlayerId] = useState("");
+  const playerIdRef = useRef(""); // ← REF pour garder playerId
   const [playerScore, setPlayerScore] = useState(1000);
   const [totalGames, setTotalGames] = useState(0);
   const [gamesWon, setGamesWon] = useState(0);
@@ -134,15 +135,16 @@ const DicoClash = () => {
 
         case 'game_end':
           console.log('🏁 GAME END - teamScore received:', data.teamScore);
+          console.log('🔍 playerIdRef.current:', playerIdRef.current);
           setTeamScore(data.teamScore);
-          updatePlayerStats(data.teamScore);
+          updatePlayerStats(data.teamScore, playerIdRef.current); // ← Utiliser la ref
           setGameState('results');
           break;
 
         case 'partner_disconnected':
           console.log('👋 Partner disconnected');
           alert('Votre complice s\'est déconnecté');
-          reloadPlayerData();
+          reloadPlayerData(playerIdRef.current);
           setGameState('home');
           break;
       }
@@ -184,18 +186,18 @@ const DicoClash = () => {
     }
   };
 
-  const reloadPlayerData = async () => {
-    if (!playerId) {
+  const reloadPlayerData = async (pId: string) => {
+    if (!pId) {
       console.warn('⚠️ No playerId to reload');
       return;
     }
 
-    console.log('🔄 Reloading player data for:', playerId);
+    console.log('🔄 Reloading player data for:', pId);
 
     const { data: player, error } = await supabase
       .from('players')
       .select('*')
-      .eq('id', playerId)
+      .eq('id', pId)
       .single();
 
     if (error) {
@@ -208,13 +210,13 @@ const DicoClash = () => {
     }
   };
 
-  const updatePlayerStats = async (finalScore: number) => {
+  const updatePlayerStats = async (finalScore: number, pId: string) => {
     console.log('═══════════════════════════════════════');
     console.log('📊 DÉBUT updatePlayerStats');
-    console.log('playerId:', playerId);
+    console.log('playerId reçu:', pId);
     console.log('finalScore (teamScore):', finalScore);
 
-    if (!playerId) {
+    if (!pId) {
       console.error('❌ ERREUR : Pas de playerId !');
       alert('Erreur : Impossible de mettre à jour le score (pas de playerId)');
       return;
@@ -235,7 +237,7 @@ const DicoClash = () => {
     const { data: currentPlayer, error: fetchError } = await supabase
       .from('players')
       .select('*')
-      .eq('id', playerId)
+      .eq('id', pId)
       .single();
 
     if (fetchError) {
@@ -268,7 +270,7 @@ const DicoClash = () => {
         total_games: newTotalGames,
         games_won: newGamesWon
       })
-      .eq('id', playerId)
+      .eq('id', pId)
       .select();
 
     if (updateError) {
@@ -335,6 +337,7 @@ const DicoClash = () => {
       }
 
       setPlayerId(player.id);
+      playerIdRef.current = player.id; // ← STOCKER DANS LA REF
       setPlayerScore(player.score_giver);
       setTotalGames(player.total_games);
       setGamesWon(player.games_won);
@@ -345,6 +348,7 @@ const DicoClash = () => {
         games: player.total_games,
         won: player.games_won
       });
+      console.log('✅ playerIdRef.current:', playerIdRef.current);
 
       ws.send(JSON.stringify({ type: 'player_online', playerId: player.id }));
 
@@ -1045,7 +1049,8 @@ const DicoClash = () => {
 
               <Button onClick={() => {
                 console.log('🔄 Retour à l\'accueil - Rechargement des données...');
-                reloadPlayerData();
+                console.log('playerIdRef.current:', playerIdRef.current);
+                reloadPlayerData(playerIdRef.current); // ← Utiliser la ref
                 setGameState('home');
               }} className="w-full bg-gradient-to-r from-cyan-500 via-blue-500 to-pink-500 hover:from-cyan-600 hover:via-blue-600 hover:to-pink-600 text-2xl font-black py-8 rounded-xl shadow-lg transform hover:scale-105 transition-all">
                 <Play className="mr-3 w-8 h-8" strokeWidth={3} fill="white" />
