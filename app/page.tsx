@@ -7,6 +7,42 @@ import { Badge } from "@/components/ui/badge";
 import { Swords, LogIn, Users, Send, Loader2, Trophy, Star, Play, TrendingUp, Target, Shield, Crown, AlertCircle, Zap, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
+// ========== COMPOSANT PUBLICITÉ ==========
+const AdBanner = ({
+  slot,
+  format = "auto",
+  style = { display: 'block' },
+  className = ""
+}: {
+  slot: string;
+  format?: string;
+  style?: React.CSSProperties;
+  className?: string;
+}) => {
+  useEffect(() => {
+    try {
+      // @ts-ignore
+      (window.adsbygoogle = window.adsbygoogle || []).push({});
+    } catch (err) {
+      console.error('AdSense error:', err);
+    }
+  }, []);
+
+  return (
+    <div className={className}>
+      <ins
+        className="adsbygoogle"
+        style={style}
+        data-ad-client="ca-pub-6353514227988642"
+        data-ad-slot={slot}
+        data-ad-format={format}
+        data-full-width-responsive="true"
+      />
+    </div>
+  );
+};
+// ==========================================
+
 interface Attempt {
   clue: string;
   guess: string;
@@ -34,7 +70,7 @@ const DicoClash = () => {
   const [pseudo, setPseudo] = useState("");
   const [ws, setWs] = useState<WebSocket | null>(null);
   const [playerId, setPlayerId] = useState("");
-  const playerIdRef = useRef(""); // ← REF pour garder playerId
+  const playerIdRef = useRef("");
   const [playerScore, setPlayerScore] = useState(1000);
   const [totalGames, setTotalGames] = useState(0);
   const [gamesWon, setGamesWon] = useState(0);
@@ -137,7 +173,7 @@ const DicoClash = () => {
           console.log('🏁 GAME END - teamScore received:', data.teamScore);
           console.log('🔍 playerIdRef.current:', playerIdRef.current);
           setTeamScore(data.teamScore);
-          updatePlayerStats(data.teamScore, playerIdRef.current); // ← Utiliser la ref
+          updatePlayerStats(data.teamScore, playerIdRef.current);
           setGameState('results');
           break;
 
@@ -337,7 +373,7 @@ const DicoClash = () => {
       }
 
       setPlayerId(player.id);
-      playerIdRef.current = player.id; // ← STOCKER DANS LA REF
+      playerIdRef.current = player.id;
       setPlayerScore(player.score_giver);
       setTotalGames(player.total_games);
       setGamesWon(player.games_won);
@@ -437,14 +473,17 @@ const DicoClash = () => {
     setCurrentGuess('');
   };
 
-  // PAGE WELCOME
+  // ========== PAGE WELCOME ==========
   if (gameState === 'welcome') {
     return (
       <div className="min-h-screen" style={{backgroundImage: 'url(/dicoclash-background-sides.png)', backgroundSize: 'cover', backgroundPosition: 'center'}}>
         <div className="min-h-screen bg-white/80 backdrop-blur-sm">
-          <div className="bg-gradient-to-r from-cyan-100 to-blue-100 border-b border-cyan-200 py-2 text-center text-xs text-gray-600">
-            Publicité - 728x90
-          </div>
+          <AdBanner
+            slot="4176823157"
+            format="auto"
+            style={{ display: 'block', minHeight: '90px' }}
+            className="bg-gradient-to-r from-cyan-100 to-blue-100 border-b border-cyan-200 py-2"
+          />
 
           <div className="max-w-6xl mx-auto p-4 md:p-8 space-y-8">
             <div className="text-center py-12 space-y-6">
@@ -612,33 +651,45 @@ const DicoClash = () => {
             </Card>
 
             <div className="grid md:grid-cols-2 gap-4">
-              <div className="bg-gradient-to-br from-blue-100 to-cyan-100 border-2 border-blue-200 rounded-xl p-12 text-center text-xs text-gray-600 shadow">
-                Publicité - 300x250
-              </div>
-              <div className="bg-gradient-to-br from-pink-100 to-purple-100 border-2 border-pink-200 rounded-xl p-12 text-center text-xs text-gray-600 shadow">
-                Publicité - 300x250
-              </div>
+              <AdBanner
+                slot="2847445522"
+                format="auto"
+                style={{ display: 'block', minHeight: '250px' }}
+                className="bg-gradient-to-br from-blue-100 to-cyan-100 border-2 border-blue-200 rounded-xl p-4 shadow"
+              />
+              <AdBanner
+                slot="6580652886"
+                format="auto"
+                style={{ display: 'block', minHeight: '250px' }}
+                className="bg-gradient-to-br from-pink-100 to-purple-100 border-2 border-pink-200 rounded-xl p-4 shadow"
+              />
             </div>
           </div>
 
-          <div className="bg-gradient-to-r from-cyan-100 to-blue-100 border-t border-cyan-200 py-2 text-center text-xs text-gray-600 mt-12">
-            Publicité - 728x90
-          </div>
+          <AdBanner
+            slot="4176823157"
+            format="auto"
+            style={{ display: 'block', minHeight: '90px' }}
+            className="bg-gradient-to-r from-cyan-100 to-blue-100 border-t border-cyan-200 py-2 mt-12"
+          />
         </div>
       </div>
     );
   }
 
-  // PAGE HOME
+  // ========== PAGE HOME ==========
   if (gameState === 'home') {
     const myRank = leaderboard.findIndex(p => p.id === playerId) + 1;
 
     return (
       <div className="min-h-screen" style={{backgroundImage: 'url(/dicoclash-background-sides.png)', backgroundSize: 'cover', backgroundPosition: 'center'}}>
         <div className="min-h-screen bg-white/80 backdrop-blur-sm">
-          <div className="bg-gradient-to-r from-cyan-100 to-blue-100 border-b border-cyan-200 py-2 text-center text-xs text-gray-600">
-            Publicité - 728x90
-          </div>
+          <AdBanner
+            slot="4176823157"
+            format="auto"
+            style={{ display: 'block', minHeight: '90px' }}
+            className="bg-gradient-to-r from-cyan-100 to-blue-100 border-b border-cyan-200 py-2"
+          />
 
           <div className="max-w-4xl mx-auto p-4 md:p-8 space-y-6">
             <div className="text-center">
@@ -755,12 +806,18 @@ const DicoClash = () => {
             </div>
 
             <div className="grid md:grid-cols-2 gap-4">
-              <div className="bg-gradient-to-br from-blue-100 to-cyan-100 border-2 border-blue-200 rounded-xl p-12 text-center text-xs text-gray-600 shadow">
-                Publicité - 300x250
-              </div>
-              <div className="bg-gradient-to-br from-pink-100 to-purple-100 border-2 border-pink-200 rounded-xl p-12 text-center text-xs text-gray-600 shadow">
-                Publicité - 300x250
-              </div>
+              <AdBanner
+                slot="2847445522"
+                format="auto"
+                style={{ display: 'block', minHeight: '250px' }}
+                className="bg-gradient-to-br from-blue-100 to-cyan-100 border-2 border-blue-200 rounded-xl p-4 shadow"
+              />
+              <AdBanner
+                slot="6580652886"
+                format="auto"
+                style={{ display: 'block', minHeight: '250px' }}
+                className="bg-gradient-to-br from-pink-100 to-purple-100 border-2 border-pink-200 rounded-xl p-4 shadow"
+              />
             </div>
 
             <div className="text-center">
@@ -775,15 +832,18 @@ const DicoClash = () => {
             </div>
           </div>
 
-          <div className="bg-gradient-to-r from-cyan-100 to-blue-100 border-t border-cyan-200 py-2 text-center text-xs text-gray-600 mt-12">
-            Publicité - 728x90
-          </div>
+          <AdBanner
+            slot="4176823157"
+            format="auto"
+            style={{ display: 'block', minHeight: '90px' }}
+            className="bg-gradient-to-r from-cyan-100 to-blue-100 border-t border-cyan-200 py-2 mt-12"
+          />
         </div>
       </div>
     );
   }
 
-  // PAGE QUEUE
+  // ========== PAGE QUEUE ==========
   if (gameState === 'queue') {
     return (
       <div className="min-h-screen" style={{backgroundImage: 'url(/dicoclash-background-sides.png)', backgroundSize: 'cover', backgroundPosition: 'center'}}>
@@ -816,7 +876,7 @@ const DicoClash = () => {
     );
   }
 
-  // PAGE PLAYING
+  // ========== PAGE PLAYING ==========
   if (gameState === 'playing') {
     const attemptsLeft = 4 - attempts.length;
 
@@ -971,16 +1031,19 @@ const DicoClash = () => {
               </div>
             )}
 
-            <div className="bg-gradient-to-r from-blue-100 to-cyan-100 border-2 border-blue-200 rounded-xl p-6 text-center text-xs text-gray-600 shadow">
-              Publicité - 728x90
-            </div>
+            <AdBanner
+              slot="4176823157"
+              format="auto"
+              style={{ display: 'block', minHeight: '90px' }}
+              className="bg-gradient-to-r from-blue-100 to-cyan-100 border-2 border-blue-200 rounded-xl p-2 shadow"
+            />
           </div>
         </div>
       </div>
     );
   }
 
-  // PAGE RESULTS
+  // ========== PAGE RESULTS ==========
   if (gameState === 'results') {
     const isPerfect = teamScore === 4;
     const wordsFound = teamScore;
@@ -1050,16 +1113,19 @@ const DicoClash = () => {
               <Button onClick={() => {
                 console.log('🔄 Retour à l\'accueil - Rechargement des données...');
                 console.log('playerIdRef.current:', playerIdRef.current);
-                reloadPlayerData(playerIdRef.current); // ← Utiliser la ref
+                reloadPlayerData(playerIdRef.current);
                 setGameState('home');
               }} className="w-full bg-gradient-to-r from-cyan-500 via-blue-500 to-pink-500 hover:from-cyan-600 hover:via-blue-600 hover:to-pink-600 text-2xl font-black py-8 rounded-xl shadow-lg transform hover:scale-105 transition-all">
                 <Play className="mr-3 w-8 h-8" strokeWidth={3} fill="white" />
                 RETOUR
               </Button>
 
-              <div className="bg-gradient-to-r from-blue-100 to-pink-100 border-2 border-blue-200 rounded-xl p-10 text-center text-xs text-gray-600">
-                Publicité - 468x60
-              </div>
+              <AdBanner
+                slot="2847445522"
+                format="auto"
+                style={{ display: 'block', minHeight: '200px' }}
+                className="bg-gradient-to-r from-blue-100 to-pink-100 border-2 border-blue-200 rounded-xl p-4"
+              />
             </CardContent>
           </Card>
         </div>
