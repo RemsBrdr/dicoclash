@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <!-- Gradient de fond -->
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a0b2e;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#2d1b4e;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0f172a;stop-opacity:1" />
+    </linearGradient>
+
+    <!-- Filtres pour effets de lumière -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="blur">
+      <feGaussianBlur stdDeviation="2"/>
+    </filter>
+  </defs>
+
+  <!-- Fond dégradé -->
+  <rect width="1920" height="1080" fill="url(#bgGradient)"/>
+
+  <!-- Cercles lumineux flous en arrière-plan -->
+  <circle cx="150" cy="200" r="120" fill="#6366f1" opacity="0.1" filter="url(#blur)"/>
+  <circle cx="1800" cy="300" r="150" fill="#ec4899" opacity="0.08" filter="url(#blur)"/>
+  <circle cx="100" cy="800" r="100" fill="#06b6d4" opacity="0.12" filter="url(#blur)"/>
+  <circle cx="1850" cy="850" r="130" fill="#8b5cf6" opacity="0.1" filter="url(#blur)"/>
+
+  <!-- Lettres côté gauche -->
+  <text x="80" y="150" font-family="Arial, sans-serif" font-size="120" font-weight="bold" fill="#6366f1" opacity="0.15">D</text>
+  <text x="50" y="350" font-family="Arial, sans-serif" font-size="80" font-weight="bold" fill="#ec4899" opacity="0.12">I</text>
+  <text x="120" y="500" font-family="Arial, sans-serif" font-size="100" font-weight="bold" fill="#06b6d4" opacity="0.18">C</text>
+  <text x="40" y="680" font-family="Arial, sans-serif" font-size="90" font-weight="bold" fill="#8b5cf6" opacity="0.14">O</text>
+  <text x="90" y="880" font-family="Arial, sans-serif" font-size="110" font-weight="bold" fill="#f59e0b" opacity="0.16">A</text>
+
+  <!-- Mots côté gauche -->
+  <text x="30" y="240" font-family="Arial, sans-serif" font-size="28" fill="#06b6d4" opacity="0.25" transform="rotate(-15 30 240)">CLASH</text>
+  <text x="60" y="420" font-family="Arial, sans-serif" font-size="24" fill="#ec4899" opacity="0.2" transform="rotate(10 60 420)">WORD</text>
+  <text x="45" y="780" font-family="Arial, sans-serif" font-size="26" fill="#6366f1" opacity="0.22" transform="rotate(-8 45 780)">GAME</text>
+
+  <!-- Lettres côté droit -->
+  <text x="1780" y="180" font-family="Arial, sans-serif" font-size="110" font-weight="bold" fill="#ec4899" opacity="0.16">L</text>
+  <text x="1820" y="380" font-family="Arial, sans-serif" font-size="95" font-weight="bold" fill="#06b6d4" opacity="0.14">A</text>
+  <text x="1750" y="550" font-family="Arial, sans-serif" font-size="105" font-weight="bold" fill="#8b5cf6" opacity="0.17">S</text>
+  <text x="1810" y="720" font-family="Arial, sans-serif" font-size="85" font-weight="bold" fill="#f59e0b" opacity="0.13">H</text>
+  <text x="1770" y="920" font-family="Arial, sans-serif" font-size="115" font-weight="bold" fill="#6366f1" opacity="0.15">!</text>
+
+  <!-- Mots côté droit -->
+  <text x="1700" y="260" font-family="Arial, sans-serif" font-size="26" fill="#8b5cf6" opacity="0.23" transform="rotate(12 1700 260)">PLAY</text>
+  <text x="1730" y="470" font-family="Arial, sans-serif" font-size="28" fill="#f59e0b" opacity="0.21" transform="rotate(-10 1730 470)">FAST</text>
+  <text x="1680" y="820" font-family="Arial, sans-serif" font-size="25" fill="#ec4899" opacity="0.24" transform="rotate(8 1680 820)">WIN</text>
+
+  <!-- Particules lumineuses -->
+  <circle cx="200" cy="300" r="3" fill="#06b6d4" opacity="0.6" filter="url(#glow)"/>
+  <circle cx="180" cy="600" r="2" fill="#ec4899" opacity="0.5" filter="url(#glow)"/>
+  <circle cx="150" cy="950" r="2.5" fill="#6366f1" opacity="0.7" filter="url(#glow)"/>
+  <circle cx="1750" cy="250" r="3" fill="#f59e0b" opacity="0.6" filter="url(#glow)"/>
+  <circle cx="1780" cy="600" r="2" fill="#06b6d4" opacity="0.5" filter="url(#glow)"/>
+  <circle cx="1820" cy="850" r="2.5" fill="#8b5cf6" opacity="0.7" filter="url(#glow)"/>
+
+  <!-- Lignes diagonales subtiles -->
+  <line x1="100" y1="100" x2="250" y2="200" stroke="#6366f1" stroke-width="1" opacity="0.1"/>
+  <line x1="80" y1="400" x2="200" y2="550" stroke="#ec4899" stroke-width="1" opacity="0.08"/>
+  <line x1="1720" y1="150" x2="1850" y2="280" stroke="#06b6d4" stroke-width="1" opacity="0.1"/>
+  <line x1="1700" y1="600" x2="1840" y2="750" stroke="#8b5cf6" stroke-width="1" opacity="0.09"/>
+</svg>
