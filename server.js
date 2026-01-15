@@ -40,9 +40,8 @@ function broadcastStats() {
     onlinePlayers: onlinePlayers.size
   };
 
-  // Broadcast to everyone
   wss.clients.forEach(client => {
-    if (client.readyState === 1) { // OPEN
+    if (client.readyState === 1) {
       client.send(JSON.stringify(stats));
     }
   });
@@ -71,11 +70,13 @@ wss.on('connection', (ws) => {
         case 'player_online':
           onlinePlayers.add(msg.playerId);
           ws.playerId = msg.playerId;
+          console.log('👤 Player online:', msg.playerId, '- Total:', onlinePlayers.size);
           broadcastStats();
           break;
 
         case 'player_offline':
           onlinePlayers.delete(msg.playerId);
+          console.log('👋 Player offline:', msg.playerId, '- Total:', onlinePlayers.size);
           broadcastStats();
           break;
 
@@ -112,6 +113,7 @@ function handleLeaveQueue(ws) {
   const idx = queue.findIndex(p => p.ws === ws);
   if (idx !== -1) {
     queue.splice(idx, 1);
+    console.log('🚪 Player left queue - Size:', queue.length);
     broadcastQueueSize();
   }
 }
@@ -130,8 +132,9 @@ async function handleJoinQueue(ws, msg) {
     broadcastQueueSize();
 
     const { data: word } = await supabase.rpc('get_random_word');
+    console.log('📝 Word selected:', word);
 
-    const { data: game } = await supabase
+    const { data: game, error: gameError } = await supabase
       .from('games')
       .insert({
         player1_id: p1.playerId,
@@ -146,7 +149,12 @@ async function handleJoinQueue(ws, msg) {
       .select()
       .single();
 
-    if (!game) return;
+    if (gameError || !game) {
+      console.error('❌ Game creation error:', gameError);
+      return;
+    }
+
+    console.log('✅ Game created:', game.id);
 
     const room = {
       id: game.id,
@@ -162,6 +170,8 @@ async function handleJoinQueue(ws, msg) {
 
     rooms.set(game.id, room);
     broadcastStats();
+
+    console.log('📤 Sending game_start to', p1.pseudo, 'and', p2.pseudo);
 
     p1.ws.send(JSON.stringify({
       type: 'game_start',
@@ -188,6 +198,8 @@ function handleSendClue(msg) {
   const { gameId, clue } = msg;
   const room = rooms.get(gameId);
   if (!room) return;
+
+  console.log('💬 Clue sent in game', gameId, ':', clue);
 
   room.attempts.push({ clue, guess: '', correct: false });
 
@@ -218,6 +230,8 @@ async function handleSendGuess(msg) {
   const normalizedWord = normalizeString(room.currentWord);
   const isCorrect = normalizedGuess === normalizedWord;
 
+  console.log('🎯 Guess in game', gameId, ':', guess, '- Correct:', isCorrect);
+
   const lastAttempt = room.attempts[room.attempts.length - 1];
   if (lastAttempt) {
     lastAttempt.guess = guess;
@@ -233,6 +247,7 @@ async function handleSendGuess(msg) {
 
   if (isCorrect) {
     room.teamScore++;
+    console.log('✅ Word found! Team score:', room.teamScore);
 
     await supabase.from('games').update({
       player1_score: room.teamScore,
@@ -241,6 +256,7 @@ async function handleSendGuess(msg) {
 
     setTimeout(() => nextRound(gameId), 2000);
   } else if (room.attempts.length >= 4) {
+    console.log('❌ Max attempts reached. Moving to next round.');
     setTimeout(() => nextRound(gameId), 2000);
   }
 }
@@ -252,16 +268,29 @@ async function nextRound(gameId) {
   if (room.timer) clearInterval(room.timer);
 
   if (room.currentRound >= 4) {
+    console.log('🏁 Game', gameId, 'finished! Team score:', room.teamScore);
+
     await supabase.from('games').update({
       status: 'finished',
       player1_score: room.teamScore,
       player2_score: room.teamScore
     }).eq('id', gameId);
 
-    broadcast(room, {
-      type: 'game_end',
-      teamScore: room.teamScore
-    });
+    console.log('📤 Sending game_end to', room.player1.pseudo, '- teamScore:', room.teamScore);
+    if (room.player1.ws.readyState === 1) {
+      room.player1.ws.send(JSON.stringify({
+        type: 'game_end',
+        teamScore: room.teamScore
+      }));
+    }
+
+    console.log('📤 Sending game_end to', room.player2.pseudo, '- teamScore:', room.teamScore);
+    if (room.player2.ws.readyState === 1) {
+      room.player2.ws.send(JSON.stringify({
+        type: 'game_end',
+        teamScore: room.teamScore
+      }));
+    }
 
     rooms.delete(gameId);
     broadcastStats();
@@ -275,6 +304,8 @@ async function nextRound(gameId) {
 
   const { data: word } = await supabase.rpc('get_random_word');
   room.currentWord = word || 'ELEPHANT';
+
+  console.log('🔄 Round', room.currentRound, 'starting - Word:', room.currentWord);
 
   await supabase.from('games').update({
     current_round: room.currentRound,
@@ -317,6 +348,7 @@ function startTimer(gameId) {
 
     if (room.timeLeft <= 0) {
       clearInterval(room.timer);
+      console.log('⏰ Time out for game', gameId);
       nextRound(gameId);
     }
   }, 1000);
@@ -334,6 +366,7 @@ function broadcast(room, data) {
 function handleDisconnect(ws) {
   if (ws.playerId) {
     onlinePlayers.delete(ws.playerId);
+    console.log('👋 Disconnect - Player:', ws.playerId);
   }
 
   const idx = queue.findIndex(p => p.ws === ws);
@@ -351,6 +384,7 @@ function handleDisconnect(ws) {
         other.ws.send(JSON.stringify({ type: 'partner_disconnected' }));
       }
 
+      console.log('🗑️ Game', gameId, 'deleted due to disconnect');
       rooms.delete(gameId);
       break;
     }
