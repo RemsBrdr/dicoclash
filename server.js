@@ -21,6 +21,7 @@ const wss = new WebSocketServer({ server });
 
 const rooms = new Map();
 const queue = [];
+const onlinePlayers = new Set();
 
 console.log('🚀 Server starting on port', PORT);
 
@@ -32,6 +33,32 @@ const normalizeString = (str) => {
     .trim();
 };
 
+function broadcastStats() {
+  const stats = {
+    type: 'stats_update',
+    activeGames: rooms.size,
+    onlinePlayers: onlinePlayers.size
+  };
+
+  // Broadcast to everyone
+  wss.clients.forEach(client => {
+    if (client.readyState === 1) { // OPEN
+      client.send(JSON.stringify(stats));
+    }
+  });
+}
+
+function broadcastQueueSize() {
+  queue.forEach(player => {
+    if (player.ws.readyState === 1) {
+      player.ws.send(JSON.stringify({
+        type: 'queue_update',
+        queueSize: queue.length
+      }));
+    }
+  });
+}
+
 wss.on('connection', (ws) => {
   console.log('🔌 New connection');
 
@@ -41,15 +68,29 @@ wss.on('connection', (ws) => {
       console.log('📩 Received:', msg.type);
 
       switch (msg.type) {
+        case 'player_online':
+          onlinePlayers.add(msg.playerId);
+          ws.playerId = msg.playerId;
+          broadcastStats();
+          break;
+
+        case 'player_offline':
+          onlinePlayers.delete(msg.playerId);
+          broadcastStats();
+          break;
+
         case 'join_queue':
           await handleJoinQueue(ws, msg);
           break;
+
         case 'leave_queue':
-          handleLeaveQueue(ws, msg);
+          handleLeaveQueue(ws);
           break;
+
         case 'send_clue':
           handleSendClue(msg);
           break;
+
         case 'send_guess':
           await handleSendGuess(msg);
           break;
@@ -63,18 +104,11 @@ wss.on('connection', (ws) => {
     console.log('🔌 Connection closed');
     handleDisconnect(ws);
   });
+
+  broadcastStats();
 });
 
-function broadcastQueueSize() {
-  queue.forEach(player => {
-    player.ws.send(JSON.stringify({
-      type: 'queue_update',
-      queueSize: queue.length
-    }));
-  });
-}
-
-function handleLeaveQueue(ws, msg) {
+function handleLeaveQueue(ws) {
   const idx = queue.findIndex(p => p.ws === ws);
   if (idx !== -1) {
     queue.splice(idx, 1);
@@ -127,6 +161,7 @@ async function handleJoinQueue(ws, msg) {
     };
 
     rooms.set(game.id, room);
+    broadcastStats();
 
     p1.ws.send(JSON.stringify({
       type: 'game_start',
@@ -157,17 +192,21 @@ function handleSendClue(msg) {
   room.attempts.push({ clue, guess: '', correct: false });
 
   const guesser = room.currentGiverId === room.player1.id ? room.player2 : room.player1;
-  guesser.ws.send(JSON.stringify({
-    type: 'new_clue',
-    clue,
-    attempts: room.attempts
-  }));
+  if (guesser.ws.readyState === 1) {
+    guesser.ws.send(JSON.stringify({
+      type: 'new_clue',
+      clue,
+      attempts: room.attempts
+    }));
+  }
 
   const giver = room.currentGiverId === room.player1.id ? room.player1 : room.player2;
-  giver.ws.send(JSON.stringify({
-    type: 'clue_sent',
-    attempts: room.attempts
-  }));
+  if (giver.ws.readyState === 1) {
+    giver.ws.send(JSON.stringify({
+      type: 'clue_sent',
+      attempts: room.attempts
+    }));
+  }
 }
 
 async function handleSendGuess(msg) {
@@ -225,6 +264,7 @@ async function nextRound(gameId) {
     });
 
     rooms.delete(gameId);
+    broadcastStats();
     return;
   }
 
@@ -242,19 +282,23 @@ async function nextRound(gameId) {
     current_giver_id: room.currentGiverId
   }).eq('id', gameId);
 
-  room.player1.ws.send(JSON.stringify({
-    type: 'new_round',
-    round: room.currentRound,
-    isGiver: room.currentGiverId === room.player1.id,
-    word: room.currentGiverId === room.player1.id ? room.currentWord : undefined
-  }));
+  if (room.player1.ws.readyState === 1) {
+    room.player1.ws.send(JSON.stringify({
+      type: 'new_round',
+      round: room.currentRound,
+      isGiver: room.currentGiverId === room.player1.id,
+      word: room.currentGiverId === room.player1.id ? room.currentWord : undefined
+    }));
+  }
 
-  room.player2.ws.send(JSON.stringify({
-    type: 'new_round',
-    round: room.currentRound,
-    isGiver: room.currentGiverId === room.player2.id,
-    word: room.currentGiverId === room.player2.id ? room.currentWord : undefined
-  }));
+  if (room.player2.ws.readyState === 1) {
+    room.player2.ws.send(JSON.stringify({
+      type: 'new_round',
+      round: room.currentRound,
+      isGiver: room.currentGiverId === room.player2.id,
+      word: room.currentGiverId === room.player2.id ? room.currentWord : undefined
+    }));
+  }
 
   startTimer(gameId);
 }
@@ -279,11 +323,19 @@ function startTimer(gameId) {
 }
 
 function broadcast(room, data) {
-  room.player1.ws.send(JSON.stringify(data));
-  room.player2.ws.send(JSON.stringify(data));
+  if (room.player1.ws.readyState === 1) {
+    room.player1.ws.send(JSON.stringify(data));
+  }
+  if (room.player2.ws.readyState === 1) {
+    room.player2.ws.send(JSON.stringify(data));
+  }
 }
 
 function handleDisconnect(ws) {
+  if (ws.playerId) {
+    onlinePlayers.delete(ws.playerId);
+  }
+
   const idx = queue.findIndex(p => p.ws === ws);
   if (idx !== -1) {
     queue.splice(idx, 1);
@@ -295,11 +347,16 @@ function handleDisconnect(ws) {
       if (room.timer) clearInterval(room.timer);
 
       const other = room.player1.ws === ws ? room.player2 : room.player1;
-      other.ws.send(JSON.stringify({ type: 'partner_disconnected' }));
+      if (other.ws.readyState === 1) {
+        other.ws.send(JSON.stringify({ type: 'partner_disconnected' }));
+      }
 
       rooms.delete(gameId);
+      break;
     }
   }
+
+  broadcastStats();
 }
 
 server.listen(PORT, () => {
