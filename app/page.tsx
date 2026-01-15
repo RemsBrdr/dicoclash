@@ -16,7 +16,7 @@ const DicoClash = () => {
   const [gameState, setGameState] = useState<"login" | "queue" | "playing" | "results">("login");
   const [pseudo, setPseudo] = useState("");
   const [ws, setWs] = useState<WebSocket | null>(null);
-  const [playerId] = useState('player_' + Math.random().toString(36).substr(2, 9));
+  const [playerId] = useState(crypto.randomUUID());
   const [gameId, setGameId] = useState("");
   const [opponentPseudo, setOpponentPseudo] = useState("");
   const [isGiver, setIsGiver] = useState(false);
