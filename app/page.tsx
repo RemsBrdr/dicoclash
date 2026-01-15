@@ -41,6 +41,22 @@ const AdBanner = ({
     </div>
   );
 };
+
+// ⬇️ AJOUTE CE NOUVEAU COMPOSANT ICI
+const AdSenseInit = () => {
+  useEffect(() => {
+    // Charger le script AdSense manuellement si pas déjà chargé
+    if (!document.querySelector('script[src*="adsbygoogle.js"]')) {
+      const script = document.createElement('script');
+      script.src = 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6353514227988642';
+      script.async = true;
+      script.crossOrigin = 'anonymous';
+      document.head.appendChild(script);
+    }
+  }, []);
+
+  return null;
+};
 // ==========================================
 
 interface Attempt {
@@ -66,6 +82,7 @@ const normalizeString = (str: string) => {
 };
 
 const DicoClash = () => {
+    AdSenseInit();
   const [gameState, setGameState] = useState<"welcome" | "home" | "queue" | "playing" | "results">("welcome");
   const [pseudo, setPseudo] = useState("");
   const [ws, setWs] = useState<WebSocket | null>(null);
