@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Swords, LogIn, Users, Send, Loader2, Trophy, Star } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
 interface Attempt {
   clue: string;
@@ -16,7 +17,7 @@ const DicoClash = () => {
   const [gameState, setGameState] = useState<"login" | "queue" | "playing" | "results">("login");
   const [pseudo, setPseudo] = useState("");
   const [ws, setWs] = useState<WebSocket | null>(null);
-  const [playerId] = useState(crypto.randomUUID());
+  const [playerId, setPlayerId] = useState("");
   const [gameId, setGameId] = useState("");
   const [opponentPseudo, setOpponentPseudo] = useState("");
   const [isGiver, setIsGiver] = useState(false);
@@ -29,6 +30,7 @@ const DicoClash = () => {
   const [player1Score, setPlayer1Score] = useState(0);
   const [player2Score, setPlayer2Score] = useState(0);
   const [waitingForOpponent, setWaitingForOpponent] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080';
@@ -111,14 +113,57 @@ const DicoClash = () => {
     };
   }, []);
 
-  const joinQueue = () => {
-    if (ws && ws.readyState === WebSocket.OPEN && pseudo.trim()) {
+  const joinQueue = async () => {
+    if (!ws || ws.readyState !== WebSocket.OPEN || !pseudo.trim()) return;
+
+    setLoading(true);
+
+    try {
+      // Créer ou récupérer le joueur dans Supabase
+      const { data: existingPlayer } = await supabase
+        .from('players')
+        .select('id')
+        .eq('pseudo', pseudo.trim())
+        .single();
+
+      let pid: string;
+
+      if (existingPlayer) {
+        pid = existingPlayer.id;
+        console.log('✅ Player exists:', pid);
+      } else {
+        const { data: newPlayer, error } = await supabase
+          .from('players')
+          .insert([{ pseudo: pseudo.trim() }])
+          .select('id')
+          .single();
+
+        if (error || !newPlayer) {
+          console.error('❌ Failed to create player:', error);
+          alert('Erreur lors de la création du joueur');
+          setLoading(false);
+          return;
+        }
+
+        pid = newPlayer.id;
+        console.log('✅ Player created:', pid);
+      }
+
+      setPlayerId(pid);
+
+      // Maintenant rejoindre la queue avec le vrai ID
       ws.send(JSON.stringify({
         type: 'join_queue',
-        playerId,
+        playerId: pid,
         pseudo: pseudo.trim()
       }));
+
       setGameState('queue');
+    } catch (err) {
+      console.error('❌ Error:', err);
+      alert('Erreur de connexion');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -170,15 +215,25 @@ const DicoClash = () => {
                 placeholder="Votre pseudo..."
                 className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500"
                 maxLength={20}
+                disabled={loading}
               />
             </div>
             <Button
               onClick={joinQueue}
-              disabled={!pseudo.trim() || !ws || ws.readyState !== WebSocket.OPEN}
+              disabled={!pseudo.trim() || !ws || ws.readyState !== WebSocket.OPEN || loading}
               className="w-full bg-gradient-to-r from-rose-600 to-rose-700 text-lg py-6 rounded-xl"
             >
-              <LogIn className="mr-2 w-5 h-5" />
-              Jouer
+              {loading ? (
+                <>
+                  <Loader2 className="mr-2 w-5 h-5 animate-spin" />
+                  Connexion...
+                </>
+              ) : (
+                <>
+                  <LogIn className="mr-2 w-5 h-5" />
+                  Jouer
+                </>
+              )}
             </Button>
             {(!ws || ws.readyState !== WebSocket.OPEN) && (
               <p className="text-sm text-orange-600 text-center">Connexion au serveur...</p>
