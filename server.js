@@ -1,4 +1,8 @@
-require('dotenv').config({ path: '.env.local' });
+// Charger dotenv SEULEMENT en local (pas sur Render)
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config({ path: '.env.local' });
+}
+
 const { WebSocketServer } = require('ws');
 const { createClient } = require('@supabase/supabase-js');
 const http = require('http');
