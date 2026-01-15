@@ -1,4 +1,3 @@
-// Charger dotenv SEULEMENT en local (pas sur Render)
 if (process.env.NODE_ENV !== 'production') {
   require('dotenv').config({ path: '.env.local' });
 }
@@ -12,21 +11,26 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// Serveur HTTP pour le keep-alive
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('DicoClash WebSocket Server is running!');
 });
 
 const PORT = process.env.PORT || 8080;
-
-// Attacher WebSocket au serveur HTTP
 const wss = new WebSocketServer({ server });
 
 const rooms = new Map();
 const queue = [];
 
 console.log('🚀 Server starting on port', PORT);
+
+const normalizeString = (str) => {
+  return str
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .trim();
+};
 
 wss.on('connection', (ws) => {
   console.log('🔌 New connection');
@@ -167,7 +171,9 @@ async function handleSendGuess(msg) {
   const room = rooms.get(gameId);
   if (!room) return;
 
-  const isCorrect = guess.toUpperCase() === room.currentWord.toUpperCase();
+  const normalizedGuess = normalizeString(guess);
+  const normalizedWord = normalizeString(room.currentWord);
+  const isCorrect = normalizedGuess === normalizedWord;
 
   const lastAttempt = room.attempts[room.attempts.length - 1];
   if (lastAttempt) {
@@ -194,6 +200,12 @@ async function handleSendGuess(msg) {
       player2_score: room.player2Score
     }).eq('id', gameId);
 
+    broadcast(room, {
+      type: 'score_update',
+      myScore: room.currentGiverId === room.player1.id ? room.player1Score : room.player2Score,
+      opponentScore: room.currentGiverId === room.player1.id ? room.player2Score : room.player1Score
+    });
+
     setTimeout(() => nextRound(gameId), 2000);
   } else if (room.attempts.length >= 4) {
     setTimeout(() => nextRound(gameId), 2000);
@@ -213,11 +225,17 @@ async function nextRound(gameId) {
       player2_score: room.player2Score
     }).eq('id', gameId);
 
-    broadcast(room, {
+    room.player1.ws.send(JSON.stringify({
       type: 'game_end',
-      player1Score: room.player1Score,
-      player2Score: room.player2Score
-    });
+      myScore: room.player1Score,
+      opponentScore: room.player2Score
+    }));
+
+    room.player2.ws.send(JSON.stringify({
+      type: 'game_end',
+      myScore: room.player2Score,
+      opponentScore: room.player1Score
+    }));
 
     rooms.delete(gameId);
     return;
@@ -294,7 +312,6 @@ function handleDisconnect(ws) {
   }
 }
 
-// Démarrer le serveur
 server.listen(PORT, () => {
   console.log('🚀 WebSocket server running on port', PORT);
 });
