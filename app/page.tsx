@@ -31,9 +31,9 @@ const DicoClash = () => {
   const [waitingForOpponent, setWaitingForOpponent] = useState(false);
 
   useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080';
     const socket = new WebSocket(wsUrl);
+
     socket.onopen = () => {
       console.log('✅ WebSocket connected');
       setWs(socket);
