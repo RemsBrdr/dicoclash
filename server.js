@@ -131,8 +131,10 @@ async function handleJoinQueue(ws, msg) {
     const p2 = queue.shift();
     broadcastQueueSize();
 
-    const { data: word } = await supabase.rpc('get_random_word');
-    console.log('📝 Word selected:', word);
+// Récupérer un mot aléatoire
+    const { data: wordData, error: wordError } = await supabase.rpc('get_random_word');
+    const word = wordData || 'ELEPHANT';
+    console.log('📝 Word selected:', word, '- Error:', wordError);
 
     const { data: game, error: gameError } = await supabase
       .from('games')
@@ -302,8 +304,10 @@ async function nextRound(gameId) {
   room.attempts = [];
   room.timeLeft = 60;
 
-  const { data: word } = await supabase.rpc('get_random_word');
-  room.currentWord = word || 'ELEPHANT';
+    const { data: wordData, error: wordError } = await supabase.rpc('get_random_word');
+    const word = wordData || 'ELEPHANT';
+    room.currentWord = word;
+    console.log('🔄 New word:', word, '- Error:', wordError);
 
   console.log('🔄 Round', room.currentRound, 'starting - Word:', room.currentWord);
 
