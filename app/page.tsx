@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Swords, LogIn, Users, Send, Loader2, Trophy, Star, Play, TrendingUp, Target, Shield, Crown, AlertCircle, Zap, X } from "lucide-react";
+import { Swords, Users, Send, Loader2, Trophy, Star, Play, Target, Shield, Crown, AlertCircle, Zap, X, Clock, Award, Ban, Check } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
 // ========== COMPOSANT PUBLICITÉ ==========
@@ -42,10 +42,8 @@ const AdBanner = ({
   );
 };
 
-// ⬇️ AJOUTE CE NOUVEAU COMPOSANT ICI
 const AdSenseInit = () => {
   useEffect(() => {
-    // Charger le script AdSense manuellement si pas déjà chargé
     if (!document.querySelector('script[src*="adsbygoogle.js"]')) {
       const script = document.createElement('script');
       script.src = 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6353514227988642';
@@ -82,7 +80,8 @@ const normalizeString = (str: string) => {
 };
 
 const DicoClash = () => {
-    AdSenseInit();
+  AdSenseInit();
+
   const [gameState, setGameState] = useState<"welcome" | "home" | "queue" | "playing" | "results">("welcome");
   const [pseudo, setPseudo] = useState("");
   const [ws, setWs] = useState<WebSocket | null>(null);
@@ -111,108 +110,128 @@ const DicoClash = () => {
 
   useEffect(() => {
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080';
-    const socket = new WebSocket(wsUrl);
+    let socket: WebSocket | null = null;
+    let reconnectAttempts = 0;
+    const MAX_RECONNECT_ATTEMPTS = 5;
 
-    socket.onopen = () => {
-      console.log('✅ WebSocket connected');
-      setWs(socket);
+    const connect = () => {
+      console.log('🔄 Connecting to WebSocket...', wsUrl);
+      socket = new WebSocket(wsUrl);
+
+      socket.onopen = () => {
+        console.log('✅ WebSocket connected');
+        reconnectAttempts = 0;
+        setWs(socket);
+      };
+
+      socket.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        console.log('📩 WS Message received:', data.type, data);
+
+        switch (data.type) {
+          case 'stats_update':
+            console.log('📊 Stats update - Games:', data.activeGames, 'Players:', data.onlinePlayers);
+            setActiveGames(data.activeGames);
+            setOnlinePlayers(data.onlinePlayers);
+            break;
+
+          case 'queue_update':
+            console.log('👥 Queue update - Size:', data.queueSize);
+            setQueueSize(data.queueSize);
+            break;
+
+          case 'game_start':
+            console.log('🎮 GAME START:', data);
+            setGameId(data.gameId);
+            setPartnerPseudo(data.partnerPseudo);
+            setIsGiver(data.isGiver);
+            setWord(data.word || '');
+            setRound(data.round);
+            setAttempts([]);
+            setTimeLeft(60);
+            setTeamScore(0);
+            setGameState('playing');
+            break;
+
+          case 'new_clue':
+            console.log('💬 New clue received');
+            setAttempts(data.attempts);
+            setWaitingForPartner(false);
+            break;
+
+          case 'clue_sent':
+            console.log('✅ Clue sent confirmation');
+            setAttempts(data.attempts);
+            setWaitingForPartner(true);
+            break;
+
+          case 'new_guess':
+            console.log('🎯 New guess - Correct:', data.correct);
+            setAttempts(data.attempts);
+            setWaitingForPartner(false);
+            if (data.correct) {
+              setTeamScore(prev => {
+                const newScore = prev + 1;
+                console.log('✅ Team score incremented:', newScore);
+                return newScore;
+              });
+            }
+            break;
+
+          case 'new_round':
+            console.log('🔄 New round:', data.round);
+            setRound(data.round);
+            setIsGiver(data.isGiver);
+            setWord(data.word || '');
+            setAttempts([]);
+            setTimeLeft(60);
+            setWaitingForPartner(false);
+            break;
+
+          case 'timer_update':
+            setTimeLeft(data.timeLeft);
+            break;
+
+          case 'game_end':
+            console.log('🏁 GAME END - teamScore received:', data.teamScore);
+            console.log('🔍 playerIdRef.current:', playerIdRef.current);
+            setTeamScore(data.teamScore);
+            updatePlayerStats(data.teamScore, playerIdRef.current);
+            setGameState('results');
+            break;
+
+          case 'partner_disconnected':
+            console.log('👋 Partner disconnected');
+            alert('Votre complice s\'est déconnecté');
+            reloadPlayerData(playerIdRef.current);
+            setGameState('home');
+            break;
+        }
+      };
+
+      socket.onerror = (error) => {
+        console.error('❌ WebSocket error:', error);
+      };
+
+      socket.onclose = () => {
+        console.log('🔌 WebSocket closed');
+
+        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+          reconnectAttempts++;
+          const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 10000);
+          console.log(`🔄 Reconnecting in ${delay}ms (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+          setTimeout(connect, delay);
+        } else {
+          console.error('❌ Max reconnection attempts reached');
+          setWs(null);
+        }
+      };
     };
 
-    socket.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      console.log('📩 WS Message received:', data.type, data);
-
-      switch (data.type) {
-        case 'stats_update':
-          console.log('📊 Stats update - Games:', data.activeGames, 'Players:', data.onlinePlayers);
-          setActiveGames(data.activeGames);
-          setOnlinePlayers(data.onlinePlayers);
-          break;
-
-        case 'queue_update':
-          console.log('👥 Queue update - Size:', data.queueSize);
-          setQueueSize(data.queueSize);
-          break;
-
-        case 'game_start':
-          console.log('🎮 GAME START:', data);
-          setGameId(data.gameId);
-          setPartnerPseudo(data.partnerPseudo);
-          setIsGiver(data.isGiver);
-          setWord(data.word || '');
-          setRound(data.round);
-          setAttempts([]);
-          setTimeLeft(60);
-          setTeamScore(0);
-          setGameState('playing');
-          break;
-
-        case 'new_clue':
-          console.log('💬 New clue received');
-          setAttempts(data.attempts);
-          setWaitingForPartner(false);
-          break;
-
-        case 'clue_sent':
-          console.log('✅ Clue sent confirmation');
-          setAttempts(data.attempts);
-          setWaitingForPartner(true);
-          break;
-
-        case 'new_guess':
-          console.log('🎯 New guess - Correct:', data.correct);
-          setAttempts(data.attempts);
-          setWaitingForPartner(false);
-          if (data.correct) {
-            setTeamScore(prev => {
-              const newScore = prev + 1;
-              console.log('✅ Team score incremented:', newScore);
-              return newScore;
-            });
-          }
-          break;
-
-        case 'new_round':
-          console.log('🔄 New round:', data.round);
-          setRound(data.round);
-          setIsGiver(data.isGiver);
-          setWord(data.word || '');
-          setAttempts([]);
-          setTimeLeft(60);
-          setWaitingForPartner(false);
-          break;
-
-        case 'timer_update':
-          setTimeLeft(data.timeLeft);
-          break;
-
-        case 'game_end':
-          console.log('🏁 GAME END - teamScore received:', data.teamScore);
-          console.log('🔍 playerIdRef.current:', playerIdRef.current);
-          setTeamScore(data.teamScore);
-          updatePlayerStats(data.teamScore, playerIdRef.current);
-          setGameState('results');
-          break;
-
-        case 'partner_disconnected':
-          console.log('👋 Partner disconnected');
-          alert('Votre complice s\'est déconnecté');
-          reloadPlayerData(playerIdRef.current);
-          setGameState('home');
-          break;
-      }
-    };
-
-    socket.onerror = (error) => {
-      console.error('❌ WebSocket error:', error);
-    };
-
-    socket.onclose = () => {
-      console.log('🔌 WebSocket closed');
-    };
+    connect();
 
     return () => {
-      if (socket.readyState === WebSocket.OPEN) {
+      if (socket && socket.readyState === WebSocket.OPEN) {
         socket.close();
       }
     };
@@ -569,60 +588,89 @@ const DicoClash = () => {
                     </div>
                   </Button>
                   {(!ws || ws.readyState !== WebSocket.OPEN) && (
-                    <p className="text-sm text-orange-600 text-center font-bold">Connexion au serveur...</p>
+                    <div className="bg-blue-50 border-2 border-blue-300 rounded-lg p-4">
+                      <div className="flex items-center gap-3 mb-2">
+                        <Loader2 className="w-5 h-5 text-blue-600 animate-spin flex-shrink-0" />
+                        <p className="text-sm font-black text-blue-900">🚀 Vous êtes le premier !</p>
+                      </div>
+                      <p className="text-xs text-blue-700 font-medium">Le serveur démarre pour vous, patientez quelques secondes...</p>
+                    </div>
                   )}
                 </CardContent>
               </Card>
             </div>
 
-            <Card className="border-2 border-blue-300 bg-white shadow-xl">
-              <CardHeader className="bg-gradient-to-r from-blue-100 to-cyan-100 border-b">
-                <CardTitle className="text-2xl font-black flex items-center gap-2 text-gray-900">
-                  <Target className="w-6 h-6 text-cyan-600" />
-                  Comment jouer ?
+            {/* RÈGLES DU JEU - VERSION ENRICHIE */}
+            <Card className="border-4 border-blue-400 bg-white shadow-2xl">
+              <CardHeader className="bg-gradient-to-r from-blue-200 to-cyan-200 border-b-4 border-blue-400">
+                <CardTitle className="text-3xl font-black flex items-center gap-3 text-gray-900">
+                  <Target className="w-8 h-8 text-cyan-700" strokeWidth={3} />
+                  RÈGLES DU JEU
                 </CardTitle>
               </CardHeader>
-              <CardContent className="p-6">
-                <div className="grid md:grid-cols-2 gap-6">
-                  <div className="space-y-4">
-                    <div className="flex gap-4 items-start">
-                      <div className="flex-shrink-0 w-10 h-10 bg-gradient-to-br from-cyan-500 to-blue-600 text-white rounded-full flex items-center justify-center font-black shadow-md">1</div>
+              <CardContent className="p-8">
+                <div className="grid md:grid-cols-2 gap-8">
+                  <div className="space-y-6">
+                    <div className="flex gap-4 items-start bg-cyan-50 p-4 rounded-xl border-2 border-cyan-200">
+                      <Target className="w-10 h-10 text-cyan-600 flex-shrink-0" strokeWidth={2.5} />
                       <div>
-                        <h3 className="font-bold text-lg text-gray-900">Trouvez un complice</h3>
-                        <p className="text-sm text-gray-600">Matchmaking automatique et rapide</p>
+                        <h3 className="font-black text-xl text-gray-900 mb-2">OBJECTIF</h3>
+                        <p className="text-base font-bold text-gray-800">Deviner 4 mots en équipe avec des indices</p>
                       </div>
                     </div>
-                    <div className="flex gap-4 items-start">
-                      <div className="flex-shrink-0 w-10 h-10 bg-gradient-to-br from-indigo-500 to-pink-500 text-white rounded-full flex items-center justify-center font-black shadow-md">2</div>
-                      <div>
-                        <h3 className="font-bold text-lg text-gray-900">Donnez des indices</h3>
-                        <p className="text-sm text-gray-600">Alternez les rôles à chaque manche</p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="space-y-4">
-                    <div className="flex gap-4 items-start">
-                      <div className="flex-shrink-0 w-10 h-10 bg-gradient-to-br from-pink-500 to-purple-500 text-white rounded-full flex items-center justify-center font-black shadow-md">3</div>
-                      <div>
-                        <h3 className="font-bold text-lg text-gray-900">Trouvez ensemble</h3>
-                        <p className="text-sm text-gray-600">4 mots, 4 tentatives, 60 secondes</p>
-                      </div>
-                    </div>
-                    <div className="flex gap-4 items-start">
-                      <div className="flex-shrink-0 w-10 h-10 bg-gradient-to-br from-yellow-500 to-orange-500 text-white rounded-full flex items-center justify-center font-black shadow-md">4</div>
-                      <div>
-                        <h3 className="font-bold text-lg text-gray-900">Marquez des points</h3>
-                        <p className="text-sm text-gray-600">+25 pts par mot, -10 si raté</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
 
-                <div className="mt-6 p-4 bg-cyan-100 rounded-xl border-2 border-cyan-300">
-                  <p className="text-sm text-gray-900 font-bold">
-                    <Shield className="inline w-5 h-5 mr-2 text-cyan-600" />
-                    <strong>Règle :</strong> Vos indices ne doivent pas être trop similaires au mot à deviner !
-                  </p>
+                    <div className="flex gap-4 items-start bg-orange-50 p-4 rounded-xl border-2 border-orange-200">
+                      <Clock className="w-10 h-10 text-orange-600 flex-shrink-0" strokeWidth={2.5} />
+                      <div>
+                        <h3 className="font-black text-xl text-gray-900 mb-2">TEMPS LIMITÉ</h3>
+                        <p className="text-base font-bold text-gray-800">60 secondes pour toute la partie</p>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-4 items-start bg-purple-50 p-4 rounded-xl border-2 border-purple-200">
+                      <Users className="w-10 h-10 text-purple-600 flex-shrink-0" strokeWidth={2.5} />
+                      <div>
+                        <h3 className="font-black text-xl text-gray-900 mb-2">COOPÉRATION</h3>
+                        <p className="text-base font-bold text-gray-800">4 tentatives maximum par mot</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-6">
+                    <div className="flex gap-4 items-start bg-green-50 p-4 rounded-xl border-2 border-green-300">
+                      <Award className="w-10 h-10 text-green-600 flex-shrink-0" strokeWidth={2.5} />
+                      <div>
+                        <h3 className="font-black text-xl text-gray-900 mb-2">SCORING</h3>
+                        <p className="text-base font-bold text-green-700">✅ +25 points par mot trouvé</p>
+                        <p className="text-base font-bold text-red-700 mt-1">❌ -10 points par mot raté</p>
+                      </div>
+                    </div>
+
+                    <div className="bg-red-50 p-6 rounded-xl border-4 border-red-400">
+                      <div className="flex gap-3 items-start mb-3">
+                        <Ban className="w-8 h-8 text-red-600 flex-shrink-0" strokeWidth={3} />
+                        <h3 className="font-black text-xl text-red-900">INDICES INTERDITS</h3>
+                      </div>
+                      <ul className="space-y-2 text-sm font-bold text-red-800">
+                        <li className="flex items-start gap-2">
+                          <X className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                          Donner le mot lui-même
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <X className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                          Mot contenant le mot à deviner
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <X className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                          Même début ou fin de mot
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <X className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                          Trop de lettres en commun
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -694,7 +742,7 @@ const DicoClash = () => {
     );
   }
 
-  // ========== PAGE HOME ==========
+// ========== PAGE HOME ==========
   if (gameState === 'home') {
     const myRank = leaderboard.findIndex(p => p.id === playerId) + 1;
 
@@ -777,50 +825,25 @@ const DicoClash = () => {
               </Card>
             </div>
 
-            <div className="grid md:grid-cols-2 gap-4">
-              <Card className="border-2 border-blue-300 bg-white shadow">
-                <CardHeader className="bg-gradient-to-r from-blue-100 to-cyan-100 border-b pb-3">
-                  <CardTitle className="flex items-center gap-2 text-lg font-bold text-gray-900">
-                    <Target className="w-5 h-5 text-cyan-600" />
-                    Règles du jeu
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-4 space-y-2 text-sm">
-                  <p className="font-bold text-gray-900">🎯 4 mots à deviner en équipe</p>
-                  <p className="font-bold text-gray-900">🔄 4 tentatives par mot maximum</p>
-                  <p className="font-bold text-gray-900">⏱️ 60 secondes chrono</p>
-                  <p className="font-bold text-green-600">✅ +25 pts si trouvé</p>
-                  <p className="font-bold text-red-600">❌ -10 pts si raté</p>
-                </CardContent>
-              </Card>
-
-              <Card className="border-2 border-yellow-300 bg-white shadow">
-                <CardHeader className="bg-gradient-to-r from-yellow-100 to-orange-100 border-b pb-3">
-                  <CardTitle className="flex items-center gap-2 text-lg font-bold text-gray-900">
-                    <Trophy className="w-5 h-5 text-yellow-600" />
-                    Top 5
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-4">
-                  {leaderboard.length === 0 ? (
-                    <p className="text-center text-gray-600 py-4 text-sm">Chargement...</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {leaderboard.slice(0, 5).map((player, index) => (
-                        <div key={player.id} className={`flex justify-between items-center p-2 rounded-lg ${player.id === playerId ? 'bg-cyan-200 border-2 border-cyan-400' : 'bg-gray-100 border border-gray-200'}`}>
-                          <div className="flex items-center gap-2">
-                            {index === 0 && <Crown className="w-4 h-4 text-yellow-600" />}
-                            <span className="font-black text-gray-600 text-sm">#{index + 1}</span>
-                            <span className="font-bold text-sm text-gray-900">{player.pseudo}</span>
-                          </div>
-                          <div className="text-cyan-600 font-black text-lg">{player.score_giver}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
+            {/* RAPPEL RÈGLES VERSION COMPACTE */}
+            <Card className="border-2 border-blue-300 bg-gradient-to-br from-blue-50 to-cyan-50 shadow">
+              <CardHeader className="pb-3 border-b bg-blue-100">
+                <CardTitle className="flex items-center gap-2 text-lg font-bold text-gray-900">
+                  <Shield className="w-5 h-5 text-blue-600" />
+                  Rappel des règles
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-4 space-y-3">
+                <div className="flex items-center gap-3 bg-white p-3 rounded-lg border border-blue-200">
+                  <Check className="w-5 h-5 text-green-600 flex-shrink-0" strokeWidth={3} />
+                  <p className="text-sm font-bold text-gray-900">+25 pts par mot trouvé • -10 pts si raté</p>
+                </div>
+                <div className="flex items-center gap-3 bg-white p-3 rounded-lg border border-red-200">
+                  <Ban className="w-5 h-5 text-red-600 flex-shrink-0" strokeWidth={3} />
+                  <p className="text-sm font-bold text-gray-900">Indice ≠ mot à deviner (pas de similitude)</p>
+                </div>
+              </CardContent>
+            </Card>
 
             <div className="grid md:grid-cols-2 gap-4">
               <AdBanner
@@ -915,11 +938,51 @@ const DicoClash = () => {
                     {teamScore}/4
                   </div>
                   <div className={`text-2xl font-black ${timeLeft > 30 ? 'text-green-300' : timeLeft > 10 ? 'text-yellow-300' : 'text-red-300 animate-pulse'}`}>
+                    <Clock className="inline w-6 h-6 mr-1" />
                     {timeLeft}s
                   </div>
                 </div>
               </div>
             </div>
+
+            {/* RAPPEL RÈGLES PENDANT LE JEU */}
+            <Card className="border-4 border-orange-400 bg-orange-50 shadow-xl">
+              <CardContent className="p-4">
+                <div className="flex items-start gap-3">
+                  <Shield className="w-7 h-7 text-orange-700 flex-shrink-0 mt-0.5" strokeWidth={3} />
+                  <div className="flex-1 space-y-2">
+                    <p className="font-black text-orange-900 text-base">RÈGLES :</p>
+                    <div className="grid md:grid-cols-2 gap-3">
+                      <div className="bg-white p-3 rounded-lg border-2 border-green-300">
+                        <div className="flex items-center gap-2 mb-1">
+                          <Check className="w-5 h-5 text-green-600" strokeWidth={3} />
+                          <span className="font-black text-green-900 text-sm">SI TROUVÉ</span>
+                        </div>
+                        <p className="text-xs font-bold text-green-800">+25 points au score</p>
+                      </div>
+                      <div className="bg-white p-3 rounded-lg border-2 border-red-300">
+                        <div className="flex items-center gap-2 mb-1">
+                          <X className="w-5 h-5 text-red-600" strokeWidth={3} />
+                          <span className="font-black text-red-900 text-sm">SI RATÉ</span>
+                        </div>
+                        <p className="text-xs font-bold text-red-800">-10 points au score</p>
+                      </div>
+                    </div>
+                    {isGiver && (
+                      <div className="bg-white p-3 rounded-lg border-2 border-red-400 mt-2">
+                        <div className="flex items-center gap-2 mb-1">
+                          <Ban className="w-5 h-5 text-red-600" strokeWidth={3} />
+                          <span className="font-black text-red-900 text-sm">INTERDICTIONS</span>
+                        </div>
+                        <p className="text-xs font-bold text-red-800">
+                          ❌ Donner le mot / Mot similaire / Même début ou fin
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
 
             {isGiver && (
               <Card className="border-2 border-cyan-300 bg-white shadow-lg">
