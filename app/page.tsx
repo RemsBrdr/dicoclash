@@ -193,6 +193,7 @@ const DicoClash = () => {
             break;
 
           case 'word_failed':
+              console.log('❌ Word failed received:', data.word);
             setFailedWord(data.word);
             setTimeout(() => setFailedWord(''), 3000);
             break;
@@ -541,35 +542,44 @@ const DicoClash = () => {
   };
 
   const nextBotRound = () => {
-    if (round >= 4) {
-      endBotGame();
-      return;
-    }
+  console.log('🔄 nextBotRound called - current round:', round);
 
-    const nextRound = round + 1;
-    setRound(nextRound);
-    setAttempts([]);
+  if (round >= 4) {
+    console.log('🏁 Game finished');
+    endBotGame();
+    return;
+  }
 
-    const nextWord = botWords[nextRound - 1];
-    const allHints = [
-      nextWord.hints.hint1,
-      nextWord.hints.hint2,
-      nextWord.hints.hint3,
-      nextWord.hints.hint4,
-      nextWord.hints.hint5,
-      nextWord.hints.hint6
-    ];
-    const shuffledHints = allHints.sort(() => Math.random() - 0.5);
+  const nextRoundNum = round + 1;
+  console.log('📍 Moving to round:', nextRoundNum);
 
-    setBotCurrentHints(shuffledHints);
-    setBotHintIndex(0);
-    setWord(nextWord.word);
+  setRound(nextRoundNum);
+  setAttempts([]);
+  setFailedWord('');
 
-    console.log('🔄 Next bot round:', nextRound, 'Word:', nextWord.word);
+  const nextWord = botWords[nextRoundNum - 1];
+  console.log('🎯 Next word:', nextWord.word);
 
-    // Donner le premier indice automatiquement
-    setTimeout(() => giveBotHint(), 1500);
-  };
+  const allHints = [
+    nextWord.hints.hint1,
+    nextWord.hints.hint2,
+    nextWord.hints.hint3,
+    nextWord.hints.hint4,
+    nextWord.hints.hint5,
+    nextWord.hints.hint6
+  ];
+  const shuffledHints = allHints.sort(() => Math.random() - 0.5);
+
+  setBotCurrentHints(shuffledHints);
+  setBotHintIndex(0);
+  setWord(nextWord.word);
+
+  // IMPORTANT : Donner le premier indice automatiquement après un délai
+  setTimeout(() => {
+    console.log('💡 Giving first hint for round', nextRoundNum);
+    giveBotHint();
+  }, 1500);
+};
 
   const endBotGame = () => {
     if (botTimerInterval) {

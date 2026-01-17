@@ -90,6 +90,7 @@ export const isPseudoAvailableForGuest = async (pseudo: string): Promise<boolean
 };
 
 // Créer ou récupérer un joueur
+// Créer ou récupérer un joueur
 export const getOrCreatePlayer = async (pseudo: string, accountId?: string) => {
   const isGuest = !accountId;
 
@@ -101,17 +102,40 @@ export const getOrCreatePlayer = async (pseudo: string, accountId?: string) => {
     }
   }
 
-  // Chercher joueur existant
-  let query = supabase.from('players').select('*').eq('pseudo', pseudo.trim());
-
+  // Si compte : chercher par account_id
   if (accountId) {
-    query = query.eq('account_id', accountId);
+    const { data: existingPlayer } = await supabase
+      .from('players')
+      .select('*')
+      .eq('account_id', accountId)
+      .single();
+
+    if (existingPlayer) {
+      // Mettre à jour le pseudo si changé
+      if (existingPlayer.pseudo !== pseudo.trim()) {
+        await supabase
+          .from('players')
+          .update({ pseudo: pseudo.trim() })
+          .eq('id', existingPlayer.id);
+
+        return { ...existingPlayer, pseudo: pseudo.trim() };
+      }
+      return existingPlayer;
+    }
   }
 
-  const { data: existingPlayer } = await query.single();
+  // Si invité : chercher par pseudo
+  if (isGuest) {
+    const { data: existingPlayer } = await supabase
+      .from('players')
+      .select('*')
+      .eq('pseudo', pseudo.trim())
+      .eq('is_guest', true)
+      .single();
 
-  if (existingPlayer) {
-    return existingPlayer;
+    if (existingPlayer) {
+      return existingPlayer;
+    }
   }
 
   // Créer nouveau joueur
@@ -125,7 +149,10 @@ export const getOrCreatePlayer = async (pseudo: string, accountId?: string) => {
     .select()
     .single();
 
-  if (error) throw error;
+  if (error) {
+    console.error('Error creating player:', error);
+    throw new Error('Erreur lors de la création du joueur');
+  }
 
   return newPlayer;
 };
