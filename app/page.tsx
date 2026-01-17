@@ -916,82 +916,58 @@ const DicoClash = () => {
     );
   }
 
-  // ========== PAGE PLAYING ==========
+// ========== PAGE PLAYING ==========
   if (gameState === 'playing') {
     const attemptsLeft = 4 - attempts.length;
 
     return (
       <div className="min-h-screen" style={{backgroundImage: 'url(/dicoclash-background-sides.png)', backgroundSize: 'cover', backgroundPosition: 'center'}}>
         <div className="min-h-screen bg-white/80 backdrop-blur-sm p-2 md:p-4">
-          <div className="max-w-5xl mx-auto space-y-3">
-            <div className={`${isGiver ? 'bg-gradient-to-r from-cyan-500 to-blue-600' : 'bg-gradient-to-r from-indigo-500 to-purple-600'} text-white p-4 md:p-5 rounded-xl shadow-lg`}>
+          <div className="max-w-5xl mx-auto space-y-2">
+            {/* HEADER COMPACT */}
+            <div className={`${isGiver ? 'bg-gradient-to-r from-cyan-500 to-blue-600' : 'bg-gradient-to-r from-indigo-500 to-purple-600'} text-white p-3 rounded-xl shadow-lg`}>
               <div className="flex justify-between items-center">
-                <div>
-                  <div className="text-xl md:text-2xl font-black mb-1">MANCHE {round}/4</div>
-                  <Badge className={`${isGiver ? 'bg-white text-cyan-700' : 'bg-white text-indigo-700'} border-0 font-bold text-sm`}>
-                    {isGiver ? "🎯 VOUS FAITES DEVINER" : "🔍 VOUS DEVINEZ"}
-                  </Badge>
-                </div>
-                <div className="text-right">
-                  <div className="text-sm font-bold mb-1">avec {partnerPseudo}</div>
-                  <div className="text-4xl md:text-5xl font-black mb-1">
+                <div className="flex items-center gap-4">
+                  <div>
+                    <div className="text-lg font-black">MANCHE {round}/4</div>
+                    <Badge className={`${isGiver ? 'bg-white text-cyan-700' : 'bg-white text-indigo-700'} border-0 font-bold text-xs`}>
+                      {isGiver ? "🎯 VOUS DONNEZ" : "🔍 VOUS DEVINEZ"}
+                    </Badge>
+                  </div>
+                  <div className="text-3xl font-black">
                     {teamScore}/4
                   </div>
-                  <div className={`text-2xl font-black ${timeLeft > 30 ? 'text-green-300' : timeLeft > 10 ? 'text-yellow-300' : 'text-red-300 animate-pulse'}`}>
-                    <Clock className="inline w-6 h-6 mr-1" />
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="text-sm font-bold">avec {partnerPseudo}</div>
+                  <div className={`text-3xl font-black ${timeLeft > 30 ? 'text-green-300' : timeLeft > 10 ? 'text-yellow-300' : 'text-red-300 animate-pulse'} flex items-center gap-1`}>
+                    <Clock className="w-6 h-6" />
                     {timeLeft}s
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* RAPPEL RÈGLES PENDANT LE JEU */}
-            <Card className="border-4 border-orange-400 bg-orange-50 shadow-xl">
-              <CardContent className="p-4">
-                <div className="flex items-start gap-3">
-                  <Shield className="w-7 h-7 text-orange-700 flex-shrink-0 mt-0.5" strokeWidth={3} />
-                  <div className="flex-1 space-y-2">
-                    <p className="font-black text-orange-900 text-base">RÈGLES :</p>
-                    <div className="grid md:grid-cols-2 gap-3">
-                      <div className="bg-white p-3 rounded-lg border-2 border-green-300">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Check className="w-5 h-5 text-green-600" strokeWidth={3} />
-                          <span className="font-black text-green-900 text-sm">SI TROUVÉ</span>
-                        </div>
-                        <p className="text-xs font-bold text-green-800">+25 points au score</p>
-                      </div>
-                      <div className="bg-white p-3 rounded-lg border-2 border-red-300">
-                        <div className="flex items-center gap-2 mb-1">
-                          <X className="w-5 h-5 text-red-600" strokeWidth={3} />
-                          <span className="font-black text-red-900 text-sm">SI RATÉ</span>
-                        </div>
-                        <p className="text-xs font-bold text-red-800">-10 points au score</p>
-                      </div>
-                    </div>
-                    {isGiver && (
-                      <div className="bg-white p-3 rounded-lg border-2 border-red-400 mt-2">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Ban className="w-5 h-5 text-red-600" strokeWidth={3} />
-                          <span className="font-black text-red-900 text-sm">INTERDICTIONS</span>
-                        </div>
-                        <p className="text-xs font-bold text-red-800">
-                          ❌ Donner le mot / Mot similaire / Même début ou fin
-                        </p>
-                      </div>
-                    )}
+            {/* RÈGLES COMPACTES */}
+            <Card className="border-2 border-orange-300 bg-orange-50 shadow">
+              <CardContent className="p-2">
+                <div className="flex items-center gap-2 text-xs">
+                  <Shield className="w-4 h-4 text-orange-600 flex-shrink-0" strokeWidth={3} />
+                  <div className="flex gap-4 flex-wrap">
+                    <span className="font-bold text-green-800">✅ +25pts trouvé</span>
+                    <span className="font-bold text-red-800">❌ -10pts raté</span>
+                    {isGiver && <span className="font-bold text-orange-800">🚫 Pas de mot similaire</span>}
                   </div>
                 </div>
               </CardContent>
             </Card>
 
+            {/* MOT À DEVINER COMPACT */}
             {isGiver && (
-              <Card className="border-2 border-cyan-300 bg-white shadow-lg">
-                <CardHeader className="pb-3 border-b bg-gradient-to-r from-cyan-100 to-blue-100">
-                  <CardTitle className="text-center text-xl font-black text-gray-900">MOT À FAIRE DEVINER</CardTitle>
-                </CardHeader>
-                <CardContent className="p-6 md:p-10">
+              <Card className="border-2 border-cyan-300 bg-white shadow">
+                <CardContent className="p-3">
                   <div className="text-center">
-                    <div className="inline-block bg-gradient-to-r from-cyan-500 to-blue-600 text-white px-10 md:px-16 py-6 md:py-8 rounded-2xl text-4xl md:text-6xl font-black shadow-xl">
+                    <div className="inline-block bg-gradient-to-r from-cyan-500 to-blue-600 text-white px-8 py-3 rounded-xl text-3xl font-black shadow">
                       {word}
                     </div>
                   </div>
@@ -999,78 +975,81 @@ const DicoClash = () => {
               </Card>
             )}
 
-            <div className="grid md:grid-cols-2 gap-3">
-              <Card className="border-2 border-blue-300 bg-white shadow-lg">
-                <CardHeader className="pb-3 bg-gradient-to-r from-blue-100 to-cyan-100 border-b">
-                  <CardTitle className="text-base font-black flex items-center gap-2 text-gray-900">
+            {/* INDICES ET RÉPONSES CÔTE À CÔTE */}
+            <div className="grid md:grid-cols-2 gap-2">
+              <Card className="border-2 border-blue-300 bg-white shadow">
+                <CardHeader className="pb-2 bg-gradient-to-r from-blue-100 to-cyan-100 border-b py-2">
+                  <CardTitle className="text-sm font-black flex items-center gap-2 text-gray-900">
                     {!isGiver && <span className="text-cyan-600">→</span>}
                     INDICES
                     {!isGiver && <span className="text-cyan-600">←</span>}
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="p-3 space-y-2">
+                <CardContent className="p-2 space-y-1">
                   {attempts.map((att, i) => (
-                    <div key={i} className={`p-3 rounded-lg ${i % 2 === 0 ? 'bg-blue-100 border border-blue-300' : 'bg-white border border-gray-200'} shadow-sm`}>
+                    <div key={i} className={`p-2 rounded-lg ${i % 2 === 0 ? 'bg-blue-100 border border-blue-300' : 'bg-white border border-gray-200'} shadow-sm`}>
                       <div className="flex items-center gap-2">
-                        <Badge className="bg-cyan-500 text-white font-bold">#{i + 1}</Badge>
-                        <p className="font-bold text-lg text-gray-900">{att.clue}</p>
+                        <Badge className="bg-cyan-500 text-white font-bold text-xs">#{i + 1}</Badge>
+                        <p className="font-bold text-base text-gray-900">{att.clue}</p>
                       </div>
                     </div>
                   ))}
-                  {attempts.length === 0 && <p className="text-center text-gray-500 py-8 text-sm font-medium">Aucun indice</p>}
+                  {attempts.length === 0 && <p className="text-center text-gray-500 py-4 text-xs font-medium">Aucun indice</p>}
                 </CardContent>
               </Card>
 
-              <Card className="border-2 border-indigo-300 bg-white shadow-lg">
-                <CardHeader className="pb-3 bg-gradient-to-r from-indigo-100 to-purple-100 border-b">
-                  <CardTitle className="text-base font-black flex items-center gap-2 text-gray-900">
+              <Card className="border-2 border-indigo-300 bg-white shadow">
+                <CardHeader className="pb-2 bg-gradient-to-r from-indigo-100 to-purple-100 border-b py-2">
+                  <CardTitle className="text-sm font-black flex items-center gap-2 text-gray-900">
                     {isGiver && <span className="text-indigo-600">→</span>}
                     RÉPONSES
                     {isGiver && <span className="text-indigo-600">←</span>}
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="p-3 space-y-2">
+                <CardContent className="p-2 space-y-1">
                   {attempts.map((att, i) => (
-                    <div key={i} className={`p-3 rounded-lg ${att.correct ? 'bg-green-100 border-2 border-green-400' : att.guess ? 'bg-red-100 border border-red-300' : 'bg-gray-100 border border-gray-200'} shadow-sm`}>
+                    <div key={i} className={`p-2 rounded-lg ${att.correct ? 'bg-green-100 border-2 border-green-400' : att.guess ? 'bg-red-100 border border-red-300' : 'bg-gray-100 border border-gray-200'} shadow-sm`}>
                       <div className="flex items-center gap-2">
                         {att.guess && (
-                          <Badge className={`${att.correct ? 'bg-green-600' : 'bg-red-600'} text-white font-bold`}>
+                          <Badge className={`${att.correct ? 'bg-green-600' : 'bg-red-600'} text-white font-bold text-xs`}>
                             {att.correct ? '✓' : '✗'}
                           </Badge>
                         )}
-                        <p className="font-bold text-lg text-gray-900">{att.guess || '...'}</p>
+                        <p className="font-bold text-base text-gray-900">{att.guess || '...'}</p>
                       </div>
                     </div>
                   ))}
-                  {attempts.length === 0 && <p className="text-center text-gray-500 py-8 text-sm font-medium">Aucune réponse</p>}
+                  {attempts.length === 0 && <p className="text-center text-gray-500 py-4 text-xs font-medium">Aucune réponse</p>}
                 </CardContent>
               </Card>
             </div>
 
+            {/* ERREUR INDICE */}
             {clueError && (
-              <div className="p-4 bg-red-100 border-2 border-red-400 rounded-xl flex items-center gap-3 shadow-lg">
-                <AlertCircle className="w-6 h-6 text-red-600" strokeWidth={3} />
-                <p className="text-sm font-bold text-red-900">{clueError}</p>
+              <div className="p-3 bg-red-100 border-2 border-red-400 rounded-xl flex items-center gap-2 shadow">
+                <AlertCircle className="w-5 h-5 text-red-600" strokeWidth={3} />
+                <p className="text-xs font-bold text-red-900">{clueError}</p>
               </div>
             )}
 
+            {/* INPUT INDICE */}
             {isGiver && attemptsLeft > 0 && !waitingForPartner && (
               (attempts.length === 0 || (attempts[attempts.length - 1].guess && !attempts[attempts.length - 1].correct)) && (
-                <Card className="border-2 border-cyan-300 bg-white shadow-lg">
-                  <CardContent className="p-4">
-                    <form onSubmit={(e) => { e.preventDefault(); sendClue(); }} className="flex gap-3">
+                <Card className="border-2 border-cyan-300 bg-white shadow">
+                  <CardContent className="p-3">
+                    <form onSubmit={(e) => { e.preventDefault(); sendClue(); }} className="flex gap-2">
                       <input
                         type="text"
                         value={currentClue}
                         onChange={(e) => setCurrentClue(e.target.value)}
                         placeholder="Donnez votre indice..."
-                        className="flex-1 px-5 py-4 text-lg font-medium border-2 border-cyan-300 bg-white text-gray-900 placeholder-gray-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                        className="flex-1 px-4 py-3 text-base font-medium border-2 border-cyan-300 bg-white text-gray-900 placeholder-gray-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
                         maxLength={50}
                         autoFocus
                         required
                       />
-                      <Button type="submit" disabled={!currentClue.trim()} className="bg-gradient-to-r from-cyan-500 to-blue-600 px-8 py-4 font-bold text-lg">
-                        <Send className="w-6 h-6" strokeWidth={3} />
+                      <Button type="submit" disabled={!currentClue.trim()} className="bg-gradient-to-r from-cyan-500 to-blue-600 px-6 py-3 font-bold">
+                        <Send className="w-5 h-5" strokeWidth={3} />
                       </Button>
                     </form>
                   </CardContent>
@@ -1078,25 +1057,23 @@ const DicoClash = () => {
               )
             )}
 
+            {/* INPUT RÉPONSE */}
             {!isGiver && attempts.length > 0 && !attempts[attempts.length - 1].guess && !waitingForPartner && (
-              <Card className="border-2 border-indigo-300 bg-white shadow-lg">
-                <CardHeader className="pb-3 bg-gradient-to-r from-indigo-100 to-purple-100 border-b">
-                  <CardTitle className="text-xl font-black text-gray-900">VOTRE RÉPONSE</CardTitle>
-                </CardHeader>
-                <CardContent className="p-4 space-y-3">
+              <Card className="border-2 border-indigo-300 bg-white shadow">
+                <CardContent className="p-3">
                   <form onSubmit={(e) => { e.preventDefault(); sendGuess(); }}>
                     <input
                       type="text"
                       value={currentGuess}
                       onChange={(e) => setCurrentGuess(e.target.value.toUpperCase())}
                       placeholder="VOTRE RÉPONSE..."
-                      className="w-full px-5 py-5 border-2 border-indigo-300 bg-white text-gray-900 rounded-xl text-center font-black text-3xl uppercase focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                      className="w-full px-4 py-3 border-2 border-indigo-300 bg-white text-gray-900 rounded-xl text-center font-black text-2xl uppercase focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent mb-2"
                       maxLength={30}
                       autoFocus
                       required
                     />
-                    <Button type="submit" disabled={!currentGuess.trim()} className="w-full bg-gradient-to-r from-indigo-500 to-purple-600 py-5 mt-4 font-black text-xl">
-                      <Send className="mr-2 w-6 h-6" />
+                    <Button type="submit" disabled={!currentGuess.trim()} className="w-full bg-gradient-to-r from-indigo-500 to-purple-600 py-3 font-black text-base">
+                      <Send className="mr-2 w-5 h-5" />
                       VALIDER
                     </Button>
                   </form>
@@ -1104,10 +1081,11 @@ const DicoClash = () => {
               </Card>
             )}
 
+            {/* ATTENTE PARTENAIRE */}
             {waitingForPartner && (
-              <div className="text-center py-8 bg-white rounded-xl border-2 border-gray-200 shadow">
-                <Loader2 className="w-8 h-8 mx-auto mb-3 animate-spin text-cyan-600" strokeWidth={3} />
-                <p className="text-gray-900 font-bold text-lg">En attente de {partnerPseudo}...</p>
+              <div className="text-center py-4 bg-white rounded-xl border-2 border-gray-200 shadow">
+                <Loader2 className="w-6 h-6 mx-auto mb-2 animate-spin text-cyan-600" strokeWidth={3} />
+                <p className="text-gray-900 font-bold text-sm">En attente de {partnerPseudo}...</p>
               </div>
             )}
 
