@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useState, useEffect, useRef } from "react";
+import Script from 'next/script';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -43,16 +44,6 @@ const AdBanner = ({
   );
 };
 
-const AdSenseInit = () => {
-  useEffect(() => {
-    if (!document.querySelector('script[src*="adsbygoogle.js"]')) {
-      const script = document.createElement('script');
-      script.src = 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6353514227988642';
-      script.async = true;
-      script.crossOrigin = 'anonymous';
-      document.head.appendChild(script);
-    }
-  }, []);
 
   return null;
 };
@@ -88,6 +79,16 @@ const normalizeString = (str: string) => {
 };
 
 const DicoClash = () => {
+  // Charger AdSense une seule fois
+  useEffect(() => {
+    const script = document.createElement('script');
+    script.src = 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6353514227988642';
+    script.async = true;
+    script.crossOrigin = 'anonymous';
+    if (!document.querySelector('script[src*="adsbygoogle.js"]')) {
+      document.head.appendChild(script);
+    }
+  }, []);
   AdSenseInit();
 
   const [gameState, setGameState] = useState<"auth" | "welcome" | "home" | "queue" | "playing" | "results">("auth");
