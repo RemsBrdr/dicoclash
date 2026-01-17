@@ -258,8 +258,17 @@ async function handleSendGuess(msg) {
 
     setTimeout(() => nextRound(gameId), 2000);
   } else if (room.attempts.length >= 4) {
-    console.log('❌ Max attempts reached. Moving to next round.');
-    setTimeout(() => nextRound(gameId), 2000);
+    console.log('❌ Max attempts reached. Word was:', room.currentWord);
+
+    // ENVOYER LE MOT RATÉ
+    broadcast(room, {
+      type: 'word_failed',
+      word: room.currentWord,
+      attempts: room.attempts
+    });
+
+    // Attendre 3 secondes avant le prochain round
+    setTimeout(() => nextRound(gameId), 3000);
   }
 }
 

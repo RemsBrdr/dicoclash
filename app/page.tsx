@@ -77,8 +77,6 @@ interface BotHints {
   hint2: string;
   hint3: string;
   hint4: string;
-  hint5: string;
-  hint6: string;
 }
 
 const normalizeString = (str: string) => {
@@ -459,81 +457,86 @@ const DicoClash = () => {
 
   // BOT MODE - FIX COMPLET
   const startBotGame = async () => {
-    setLoading(true);
-    try {
-      const { data: wordsData, error } = await supabase
-        .from('words')
-        .select('id, word, word_hints!inner(hint1, hint2, hint3, hint4, hint5, hint6)')
-        .limit(200);
+  setLoading(true);
+  try {
+    const { data: wordsData, error } = await supabase
+      .from('words')
+      .select('id, word, word_hints!inner(hint1, hint2, hint3, hint4)')
+      .limit(200);
 
-      if (error || !wordsData) {
-        console.error('Error loading words:', error);
-        alert('Erreur lors du chargement des mots');
-        setLoading(false);
-        return;
-      }
-
-      const wordsWithHints = wordsData
-        .filter(w => w.word_hints && w.word_hints.length > 0)
-        .map(w => ({
-          word: w.word,
-          hints: w.word_hints[0]
-        }));
-
-      console.log('🤖 Words with hints loaded:', wordsWithHints.length);
-
-      if (wordsWithHints.length < 4) {
-        alert('Pas assez de mots avec indices dans la base');
-        setLoading(false);
-        return;
-      }
-
-      const shuffled = wordsWithHints.sort(() => Math.random() - 0.5);
-      const selectedWords = shuffled.slice(0, 4);
-
-      console.log('🤖 Bot game starting with words:', selectedWords.map(w => w.word));
-
-      setBotWords(selectedWords);
-      setBotMode(true);
-      setRound(1);
-      setTeamScore(0);
-      setAttempts([]);
-      setTimeLeft(60);
-      setIsGiver(false);
-      setFailedWord('');
-
-      const firstWordHints = selectedWords[0].hints;
-      const allHints = [
-        firstWordHints.hint1,
-        firstWordHints.hint2,
-        firstWordHints.hint3,
-        firstWordHints.hint4,
-        firstWordHints.hint5,
-        firstWordHints.hint6
-      ];
-      const shuffledHints = allHints.sort(() => Math.random() - 0.5);
-
-      console.log('💡 First word hints:', shuffledHints);
-
-      setBotCurrentHints(shuffledHints);
-      setBotHintIndex(0);
-      setWord(selectedWords[0].word);
-
-      setGameState('playing');
-      startBotTimer();
-
-      // Donner le premier indice après 1.5s
-      setTimeout(() => {
-        console.log('💡 Giving first hint');
-        giveBotHint();
-      }, 1500);
-    } catch (err) {
-      console.error('Error starting bot game:', err);
-      alert('Erreur lors du démarrage de la partie bot');
-    } finally {
+    if (error || !wordsData) {
+      console.error('Error loading words:', error);
+      alert('Erreur lors du chargement des mots');
       setLoading(false);
+      return;
     }
-  };
+
+    const wordsWithHints = wordsData
+      .filter(w => w.word_hints && w.word_hints.length > 0)
+      .map(w => ({
+        word: w.word,
+        hints: w.word_hints[0]
+      }));
+
+    console.log('🤖 Words with hints loaded:', wordsWithHints.length);
+
+    if (wordsWithHints.length < 4) {
+      alert('Pas assez de mots avec indices dans la base');
+      setLoading(false);
+      return;
+    }
+
+    const shuffled = wordsWithHints.sort(() => Math.random() - 0.5);
+    const selectedWords = shuffled.slice(0, 4);
+
+    console.log('🤖 Bot game starting with words:', selectedWords);
+
+    setBotWords(selectedWords);
+    setBotMode(true);
+    setRound(1);
+    setTeamScore(0);
+    setAttempts([]);
+    setTimeLeft(60);
+    setIsGiver(false);
+    setFailedWord('');
+
+    const firstWordHints = selectedWords[0].hints;
+    const allHints = [
+      firstWordHints.hint1,
+      firstWordHints.hint2,
+      firstWordHints.hint3,
+      firstWordHints.hint4
+    ];
+
+    console.log('💡 All hints for first word:', allHints);
+
+    setBotCurrentHints(allHints);
+    setBotHintIndex(0);
+    setWord(selectedWords[0].word);
+
+    setGameState('playing');
+    setLoading(false);
+    startBotTimer();
+
+    // IMPORTANT : Donner le premier indice IMMÉDIATEMENT
+    console.log('💡 Calling giveBotHint immediately');
+    setTimeout(() => {
+      const firstHint = allHints[0];
+      console.log('💬 Giving FIRST hint:', firstHint);
+      const newAttempt: Attempt = {
+        clue: firstHint,
+        guess: '',
+        correct: false
+      };
+      setAttempts([newAttempt]);
+      setBotHintIndex(1);
+    }, 500);
+  } catch (err) {
+    console.error('Error starting bot game:', err);
+    alert('Erreur lors du démarrage de la partie bot');
+    setLoading(false);
+  }
+};
 
   const startBotTimer = () => {
     if (botTimerInterval) clearInterval(botTimerInterval);
@@ -613,47 +616,50 @@ const DicoClash = () => {
   };
 
   const nextBotRound = () => {
-    console.log('🔄 nextBotRound - current round:', round);
+  console.log('🔄 nextBotRound - current round:', round);
 
-    if (round >= 4) {
-      console.log('🏁 Game finished');
-      endBotGame();
-      return;
-    }
+  if (round >= 4) {
+    console.log('🏁 Game finished');
+    endBotGame();
+    return;
+  }
 
-    const nextRoundNum = round + 1;
-    console.log('➡️ Moving to round:', nextRoundNum);
+  const nextRoundNum = round + 1;
+  console.log('➡️ Moving to round:', nextRoundNum);
 
-    // IMPORTANT : Réinitialiser TOUT
-    setRound(nextRoundNum);
-    setAttempts([]);
-    setFailedWord('');
-    setBotHintIndex(0);
+  setRound(nextRoundNum);
+  setAttempts([]);
+  setFailedWord('');
+  setBotHintIndex(0);
 
-    const nextWord = botWords[nextRoundNum - 1];
-    console.log('🎯 Next word:', nextWord.word);
+  const nextWord = botWords[nextRoundNum - 1];
+  console.log('🎯 Next word:', nextWord.word);
 
-    const allHints = [
-      nextWord.hints.hint1,
-      nextWord.hints.hint2,
-      nextWord.hints.hint3,
-      nextWord.hints.hint4,
-      nextWord.hints.hint5,
-      nextWord.hints.hint6
-    ];
-    const shuffledHints = allHints.sort(() => Math.random() - 0.5);
+  const allHints = [
+    nextWord.hints.hint1,
+    nextWord.hints.hint2,
+    nextWord.hints.hint3,
+    nextWord.hints.hint4
+  ];
 
-    console.log('💡 Next hints:', shuffledHints);
+  console.log('💡 All hints for next word:', allHints);
 
-    setBotCurrentHints(shuffledHints);
-    setWord(nextWord.word);
+  setBotCurrentHints(allHints);
+  setWord(nextWord.word);
 
-    // Donner le premier indice
-    setTimeout(() => {
-      console.log('💡 Giving first hint for round', nextRoundNum);
-      giveBotHint();
-    }, 1500);
-  };
+  // Donner le premier indice immédiatement
+  setTimeout(() => {
+    console.log('💬 Giving first hint for round', nextRoundNum);
+    const firstHint = allHints[0];
+    const newAttempt: Attempt = {
+      clue: firstHint,
+      guess: '',
+      correct: false
+    };
+    setAttempts([newAttempt]);
+    setBotHintIndex(1);
+  }, 500);
+};
 
   const endBotGame = () => {
     if (botTimerInterval) {
