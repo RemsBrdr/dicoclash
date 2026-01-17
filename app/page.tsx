@@ -408,11 +408,11 @@ const DicoClash = () => {
   const startBotGame = async () => {
     setLoading(true);
     try {
-      // Récupérer 4 mots aléatoires avec leurs indices
+      // Récupérer des mots aléatoires avec leurs indices
       const { data: wordsData, error } = await supabase
         .from('words')
         .select('id, word, word_hints(hint1, hint2, hint3, hint4, hint5, hint6)')
-        .limit(100);
+        .limit(200);
 
       if (error || !wordsData) {
         alert('Erreur lors du chargement des mots');
@@ -423,12 +423,20 @@ const DicoClash = () => {
       // Filtrer les mots qui ont des indices
       const wordsWithHints = wordsData.filter(w => w.word_hints && w.word_hints.length > 0);
 
+      if (wordsWithHints.length < 4) {
+        alert('Pas assez de mots avec indices dans la base');
+        setLoading(false);
+        return;
+      }
+
       // Sélectionner 4 mots au hasard
       const shuffled = wordsWithHints.sort(() => Math.random() - 0.5);
       const selectedWords = shuffled.slice(0, 4).map(w => ({
         word: w.word,
         hints: w.word_hints[0]
       }));
+
+      console.log('🤖 Bot words selected:', selectedWords);
 
       setBotWords(selectedWords);
       setBotMode(true);
@@ -437,6 +445,7 @@ const DicoClash = () => {
       setAttempts([]);
       setTimeLeft(60);
       setIsGiver(false); // Le joueur devine toujours
+      setFailedWord('');
 
       // Préparer les indices pour le premier mot
       const firstWordHints = selectedWords[0].hints;
@@ -457,6 +466,9 @@ const DicoClash = () => {
 
       // Démarrer le timer
       startBotTimer();
+
+      // Donner le premier indice après 1.5s
+      setTimeout(() => giveBotHint(), 1500);
     } catch (err) {
       console.error('Error starting bot game:', err);
       alert('Erreur lors du démarrage de la partie bot');
@@ -502,19 +514,20 @@ const DicoClash = () => {
     const normalizedWord = normalizeString(word);
     const isCorrect = normalizedGuess === normalizedWord;
 
-    const lastAttempt = attempts[attempts.length - 1];
+    const updatedAttempts = [...attempts];
+    const lastAttempt = updatedAttempts[updatedAttempts.length - 1];
     if (lastAttempt) {
       lastAttempt.guess = currentGuess;
       lastAttempt.correct = isCorrect;
-      setAttempts([...attempts]);
     }
+    setAttempts(updatedAttempts);
 
     setCurrentGuess('');
 
     if (isCorrect) {
       setTeamScore(prev => prev + 1);
       setTimeout(() => nextBotRound(), 2000);
-    } else if (attempts.length >= 4) {
+    } else if (updatedAttempts.length >= 4) {
       // Mot raté
       setFailedWord(word);
       setTimeout(() => {
@@ -552,8 +565,10 @@ const DicoClash = () => {
     setBotHintIndex(0);
     setWord(nextWord.word);
 
+    console.log('🔄 Next bot round:', nextRound, 'Word:', nextWord.word);
+
     // Donner le premier indice automatiquement
-    setTimeout(() => giveBotHint(), 1000);
+    setTimeout(() => giveBotHint(), 1500);
   };
 
   const endBotGame = () => {
@@ -562,16 +577,10 @@ const DicoClash = () => {
       setBotTimerInterval(null);
     }
 
+    console.log('🏁 Bot game ended. Final score:', teamScore);
     updatePlayerStats(teamScore, playerIdRef.current);
     setGameState('results');
   };
-
-  // Donner le premier indice automatiquement au début
-  useEffect(() => {
-    if (botMode && gameState === 'playing' && attempts.length === 0 && botHintIndex === 0) {
-      setTimeout(() => giveBotHint(), 1500);
-    }
-  }, [botMode, gameState]);
 
   const validateClue = (clue: string) => {
     const normalizedClue = normalizeString(clue);
@@ -635,177 +644,8 @@ const DicoClash = () => {
     }));
     setCurrentGuess('');
   };
-
-  // ========== PAGE AUTH ==========
+  // ========== PAGE AUTH (SEXY + RÈGLES + CLASSEMENT) ==========
   if (gameState === 'auth') {
-    return (
-      <div className="min-h-screen" style={{backgroundImage: 'url(/dicoclash-background-sides.png)', backgroundSize: 'cover', backgroundPosition: 'center'}}>
-        <div className="min-h-screen bg-white/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <Card className="w-full max-w-md border-2 border-cyan-300 shadow-2xl bg-white">
-            <CardHeader className="bg-gradient-to-r from-cyan-100 to-blue-100 border-b">
-              <div className="text-center">
-                <Swords className="w-16 h-16 mx-auto mb-4 text-cyan-600" />
-                <CardTitle className="text-3xl font-black text-gray-900">DicoClash</CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent className="p-8 space-y-4">
-              {authMode === 'choice' && (
-                <>
-                  <Button
-                    onClick={() => setAuthMode('guest')}
-                    className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-black py-6 text-lg"
-                  >
-                    <Play className="mr-2 w-6 h-6" fill="white" />
-                    JOUER EN INVITÉ
-                  </Button>
-
-                  <div className="relative">
-                    <div className="absolute inset-0 flex items-center">
-                      <span className="w-full border-t border-gray-300" />
-                    </div>
-                    <div className="relative flex justify-center text-xs uppercase">
-                      <span className="bg-white px-2 text-gray-500 font-bold">Ou</span>
-                    </div>
-                  </div>
-
-                  <Button
-                    onClick={() => setAuthMode('login')}
-                    variant="outline"
-                    className="w-full border-2 border-cyan-500 text-cyan-700 font-black py-6 text-lg hover:bg-cyan-50"
-                  >
-                    <LogIn className="mr-2 w-5 h-5" />
-                    SE CONNECTER
-                  </Button>
-
-                  <Button
-                    onClick={() => setAuthMode('register')}
-                    variant="outline"
-                    className="w-full border-2 border-pink-500 text-pink-700 font-black py-6 text-lg hover:bg-pink-50"
-                  >
-                    <UserPlus className="mr-2 w-5 h-5" />
-                    CRÉER UN COMPTE
-                  </Button>
-                </>
-              )}
-
-              {authMode === 'guest' && (
-                <>
-                  <Button
-                    onClick={() => setAuthMode('choice')}
-                    variant="ghost"
-                    className="mb-4"
-                  >
-                    ← Retour
-                  </Button>
-                  <input
-                    type="text"
-                    value={pseudo}
-                    onChange={(e) => setPseudo(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleGuest()}
-                    placeholder="Votre pseudo..."
-                    className="w-full px-5 py-4 text-lg font-bold border-2 border-cyan-300 bg-white text-gray-900 placeholder-gray-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                    maxLength={20}
-                    disabled={loading}
-                  />
-                  <Button
-                    onClick={handleGuest}
-                    disabled={!pseudo.trim() || loading}
-                    className="w-full bg-gradient-to-r from-green-500 to-emerald-600 text-white font-black py-6 text-lg"
-                  >
-                    {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : 'CONTINUER'}
-                  </Button>
-                  <p className="text-xs text-gray-600 text-center">
-                    ⚠️ Les pseudos avec compte sont protégés
-                  </p>
-                </>
-              )}
-
-              {authMode === 'login' && (
-                <>
-                  <Button
-                    onClick={() => setAuthMode('choice')}
-                    variant="ghost"
-                    className="mb-4"
-                  >
-                    ← Retour
-                  </Button>
-                  <input
-                    type="text"
-                    value={pseudo}
-                    onChange={(e) => setPseudo(e.target.value)}
-                    placeholder="Pseudo"
-                    className="w-full px-5 py-4 text-lg font-bold border-2 border-cyan-300 bg-white text-gray-900 placeholder-gray-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                    maxLength={20}
-                    disabled={loading}
-                  />
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
-                    placeholder="Mot de passe"
-                    className="w-full px-5 py-4 text-lg font-bold border-2 border-cyan-300 bg-white text-gray-900 placeholder-gray-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                    disabled={loading}
-                  />
-                  <Button
-                    onClick={handleLogin}
-                    disabled={!pseudo.trim() || !password.trim() || loading}
-                    className="w-full bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-black py-6 text-lg"
-                  >
-                    {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : 'SE CONNECTER'}
-                  </Button>
-                </>
-              )}
-
-              {authMode === 'register' && (
-                <>
-                  <Button
-                    onClick={() => setAuthMode('choice')}
-                    variant="ghost"
-                    className="mb-4"
-                  >
-                    ← Retour
-                  </Button>
-                  <input
-                    type="text"
-                    value={pseudo}
-                    onChange={(e) => setPseudo(e.target.value)}
-                    placeholder="Pseudo"
-                    className="w-full px-5 py-4 text-lg font-bold border-2 border-pink-300 bg-white text-gray-900 placeholder-gray-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500"
-                    maxLength={20}
-                    disabled={loading}
-                  />
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleRegister()}
-                    placeholder="Mot de passe (min 8 caractères)"
-                    className="w-full px-5 py-4 text-lg font-bold border-2 border-pink-300 bg-white text-gray-900 placeholder-gray-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500"
-                    disabled={loading}
-                  />
-                  <Button
-                    onClick={handleRegister}
-                    disabled={!pseudo.trim() || !password.trim() || loading}
-                    className="w-full bg-gradient-to-r from-pink-500 to-purple-600 text-white font-black py-6 text-lg"
-                  >
-                    {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : 'CRÉER MON COMPTE'}
-                  </Button>
-                  <p className="text-xs text-gray-600 text-center">
-                    ✅ Votre pseudo sera protégé
-                  </p>
-                </>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    );
-  }
-  // ========== PAGE HOME ==========
-  if (gameState === 'home') {
-    const myRank = leaderboard.findIndex(p => p.id === playerId) + 1;
-
     return (
       <div className="min-h-screen" style={{backgroundImage: 'url(/dicoclash-background-sides.png)', backgroundSize: 'cover', backgroundPosition: 'center'}}>
         <div className="min-h-screen bg-white/80 backdrop-blur-sm">
@@ -816,6 +656,331 @@ const DicoClash = () => {
             className="bg-gradient-to-r from-cyan-100 to-blue-100 border-b border-cyan-200 py-2"
           />
 
+          <div className="max-w-6xl mx-auto p-4 md:p-8 space-y-8">
+            {/* HEADER */}
+            <div className="text-center py-8">
+              <div className="flex items-center justify-center gap-4 mb-6">
+                <div className="relative">
+                  <div className="absolute inset-0 bg-gradient-to-br from-cyan-400 to-pink-500 rounded-3xl blur-2xl opacity-40 animate-pulse"></div>
+                  <div className="relative p-6 bg-gradient-to-br from-cyan-500 via-blue-500 to-pink-500 rounded-3xl shadow-2xl">
+                    <Swords className="w-16 h-16 text-white" strokeWidth={2.5} />
+                  </div>
+                </div>
+              </div>
+
+              <h1 className="text-6xl md:text-8xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-600 via-blue-600 to-pink-600 mb-4">
+                DicoClash
+              </h1>
+              <p className="text-xl md:text-2xl text-gray-800 font-bold">
+                Jeu de mots coopératif multijoueur
+              </p>
+
+              <div className="flex justify-center gap-8 md:gap-16 py-6">
+                <div className="text-center">
+                  <div className="flex items-center justify-center gap-2 text-3xl md:text-4xl font-black text-green-600">
+                    <Users className="w-8 h-8" strokeWidth={3} />
+                    {onlinePlayers}
+                  </div>
+                  <p className="text-sm text-gray-700 font-bold mt-1">en ligne</p>
+                </div>
+                <div className="text-center">
+                  <div className="flex items-center justify-center gap-2 text-3xl md:text-4xl font-black text-blue-600">
+                    <Zap className="w-8 h-8" strokeWidth={3} />
+                    {activeGames}
+                  </div>
+                  <p className="text-sm text-gray-700 font-bold mt-1">parties</p>
+                </div>
+              </div>
+            </div>
+
+            {/* FORMULAIRE AUTH */}
+            <Card className="max-w-md mx-auto border-2 border-cyan-300 shadow-2xl bg-white">
+              <CardContent className="p-8 space-y-4">
+                {authMode === 'choice' && (
+                  <>
+                    <Button
+                      onClick={() => setAuthMode('guest')}
+                      className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-black py-6 text-lg"
+                    >
+                      <Play className="mr-2 w-6 h-6" fill="white" />
+                      JOUER EN INVITÉ
+                    </Button>
+
+                    <div className="relative">
+                      <div className="absolute inset-0 flex items-center">
+                        <span className="w-full border-t border-gray-300" />
+                      </div>
+                      <div className="relative flex justify-center text-xs uppercase">
+                        <span className="bg-white px-2 text-gray-500 font-bold">Ou</span>
+                      </div>
+                    </div>
+
+                    <Button
+                      onClick={() => setAuthMode('login')}
+                      variant="outline"
+                      className="w-full border-2 border-cyan-500 text-cyan-700 font-black py-6 text-lg hover:bg-cyan-50"
+                    >
+                      <LogIn className="mr-2 w-5 h-5" />
+                      SE CONNECTER
+                    </Button>
+
+                    <Button
+                      onClick={() => setAuthMode('register')}
+                      variant="outline"
+                      className="w-full border-2 border-pink-500 text-pink-700 font-black py-6 text-lg hover:bg-pink-50"
+                    >
+                      <UserPlus className="mr-2 w-5 h-5" />
+                      CRÉER UN COMPTE
+                    </Button>
+                  </>
+                )}
+
+                {authMode === 'guest' && (
+                  <>
+                    <Button
+                      onClick={() => setAuthMode('choice')}
+                      variant="ghost"
+                      className="mb-4"
+                    >
+                      ← Retour
+                    </Button>
+                    <input
+                      type="text"
+                      value={pseudo}
+                      onChange={(e) => setPseudo(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && handleGuest()}
+                      placeholder="Votre pseudo..."
+                      className="w-full px-5 py-4 text-lg font-bold border-2 border-cyan-300 bg-white text-gray-900 placeholder-gray-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                      maxLength={20}
+                      disabled={loading}
+                    />
+                    <Button
+                      onClick={handleGuest}
+                      disabled={!pseudo.trim() || loading}
+                      className="w-full bg-gradient-to-r from-green-500 to-emerald-600 text-white font-black py-6 text-lg"
+                    >
+                      {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : 'CONTINUER'}
+                    </Button>
+                    <p className="text-xs text-gray-600 text-center">
+                      ⚠️ Les pseudos avec compte sont protégés (même casse différente)
+                    </p>
+                  </>
+                )}
+
+                {authMode === 'login' && (
+                  <>
+                    <Button
+                      onClick={() => setAuthMode('choice')}
+                      variant="ghost"
+                      className="mb-4"
+                    >
+                      ← Retour
+                    </Button>
+                    <input
+                      type="text"
+                      value={pseudo}
+                      onChange={(e) => setPseudo(e.target.value)}
+                      placeholder="Pseudo"
+                      className="w-full px-5 py-4 text-lg font-bold border-2 border-cyan-300 bg-white text-gray-900 placeholder-gray-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                      maxLength={20}
+                      disabled={loading}
+                    />
+                    <input
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
+                      placeholder="Mot de passe"
+                      className="w-full px-5 py-4 text-lg font-bold border-2 border-cyan-300 bg-white text-gray-900 placeholder-gray-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                      disabled={loading}
+                    />
+                    <Button
+                      onClick={handleLogin}
+                      disabled={!pseudo.trim() || !password.trim() || loading}
+                      className="w-full bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-black py-6 text-lg"
+                    >
+                      {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : 'SE CONNECTER'}
+                    </Button>
+                  </>
+                )}
+
+                {authMode === 'register' && (
+                  <>
+                    <Button
+                      onClick={() => setAuthMode('choice')}
+                      variant="ghost"
+                      className="mb-4"
+                    >
+                      ← Retour
+                    </Button>
+                    <input
+                      type="text"
+                      value={pseudo}
+                      onChange={(e) => setPseudo(e.target.value)}
+                      placeholder="Pseudo"
+                      className="w-full px-5 py-4 text-lg font-bold border-2 border-pink-300 bg-white text-gray-900 placeholder-gray-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500"
+                      maxLength={20}
+                      disabled={loading}
+                    />
+                    <input
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && handleRegister()}
+                      placeholder="Mot de passe (min 8 caractères)"
+                      className="w-full px-5 py-4 text-lg font-bold border-2 border-pink-300 bg-white text-gray-900 placeholder-gray-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500"
+                      disabled={loading}
+                    />
+                    <Button
+                      onClick={handleRegister}
+                      disabled={!pseudo.trim() || !password.trim() || loading}
+                      className="w-full bg-gradient-to-r from-pink-500 to-purple-600 text-white font-black py-6 text-lg"
+                    >
+                      {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : 'CRÉER MON COMPTE'}
+                    </Button>
+                    <p className="text-xs text-gray-600 text-center">
+                      ✅ Votre pseudo sera protégé (insensible à la casse)
+                    </p>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* RÈGLES DU JEU */}
+            <Card className="border-4 border-blue-400 bg-white shadow-2xl">
+              <CardHeader className="bg-gradient-to-r from-blue-200 to-cyan-200 border-b-4 border-blue-400">
+                <CardTitle className="text-3xl font-black flex items-center gap-3 text-gray-900">
+                  <Target className="w-8 h-8 text-cyan-700" strokeWidth={3} />
+                  RÈGLES DU JEU
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-8">
+                <div className="grid md:grid-cols-2 gap-8">
+                  <div className="space-y-6">
+                    <div className="flex gap-4 items-start bg-cyan-50 p-4 rounded-xl border-2 border-cyan-200">
+                      <Target className="w-10 h-10 text-cyan-600 flex-shrink-0" strokeWidth={2.5} />
+                      <div>
+                        <h3 className="font-black text-xl text-gray-900 mb-2">OBJECTIF</h3>
+                        <p className="text-base font-bold text-gray-800">Deviner 4 mots en équipe avec des indices</p>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-4 items-start bg-orange-50 p-4 rounded-xl border-2 border-orange-200">
+                      <Clock className="w-10 h-10 text-orange-600 flex-shrink-0" strokeWidth={2.5} />
+                      <div>
+                        <h3 className="font-black text-xl text-gray-900 mb-2">TEMPS LIMITÉ</h3>
+                        <p className="text-base font-bold text-gray-800">60 secondes pour toute la partie</p>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-4 items-start bg-purple-50 p-4 rounded-xl border-2 border-purple-200">
+                      <Users className="w-10 h-10 text-purple-600 flex-shrink-0" strokeWidth={2.5} />
+                      <div>
+                        <h3 className="font-black text-xl text-gray-900 mb-2">COOPÉRATION</h3>
+                        <p className="text-base font-bold text-gray-800">4 tentatives maximum par mot</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-6">
+                    <div className="flex gap-4 items-start bg-green-50 p-4 rounded-xl border-2 border-green-300">
+                      <Award className="w-10 h-10 text-green-600 flex-shrink-0" strokeWidth={2.5} />
+                      <div>
+                        <h3 className="font-black text-xl text-gray-900 mb-2">SCORING</h3>
+                        <p className="text-base font-bold text-green-700">✅ +25 points par mot trouvé</p>
+                        <p className="text-base font-bold text-red-700 mt-1">❌ -10 points par mot raté</p>
+                      </div>
+                    </div>
+
+                    <div className="bg-red-50 p-6 rounded-xl border-4 border-red-400">
+                      <div className="flex gap-3 items-start mb-3">
+                        <Ban className="w-8 h-8 text-red-600 flex-shrink-0" strokeWidth={3} />
+                        <h3 className="font-black text-xl text-red-900">INDICES INTERDITS</h3>
+                      </div>
+                      <ul className="space-y-2 text-sm font-bold text-red-800">
+                        <li className="flex items-start gap-2">
+                          <X className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                          Donner le mot lui-même
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <X className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                          Mot contenant le mot à deviner
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <X className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                          Même début ou fin de mot
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <X className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                          Trop de lettres en commun
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* CLASSEMENT */}
+            <Card className="border-2 border-yellow-300 bg-white shadow-xl">
+              <CardHeader className="bg-gradient-to-r from-yellow-100 to-orange-100 border-b">
+                <CardTitle className="text-2xl font-black flex items-center gap-2 text-gray-900">
+                  <Trophy className="w-6 h-6 text-yellow-600" />
+                  Classement
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-6">
+                {leaderboard.length === 0 ? (
+                  <div className="text-center py-8">
+                    <Loader2 className="w-8 h-8 animate-spin mx-auto text-gray-400 mb-2" />
+                    <p className="text-gray-600">Chargement...</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {leaderboard.map((player, index) => (
+                      <div key={player.id} className={`flex justify-between items-center p-4 rounded-xl border-2 transition-all ${
+                        index === 0 ? 'bg-yellow-100 border-yellow-300' :
+                        index === 1 ? 'bg-gray-100 border-gray-300' :
+                        index === 2 ? 'bg-orange-100 border-orange-300' :
+                        'bg-white border-gray-200'
+                      }`}>
+                        <div className="flex items-center gap-4">
+                          {index === 0 && <Crown className="w-6 h-6 text-yellow-600" />}
+                          {index === 1 && <Star className="w-6 h-6 text-gray-500" />}
+                          {index === 2 && <Star className="w-6 h-6 text-orange-600" />}
+                          <span className="font-black text-gray-600 text-lg w-8">#{index + 1}</span>
+                          <span className="font-bold text-lg text-gray-900">{player.pseudo}</span>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-2xl font-black text-cyan-600">{player.score_giver}</div>
+                          <div className="text-xs text-gray-600 font-medium">{player.total_games} parties • {player.games_won} parfaites</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <AdBanner
+            slot="4176823157"
+            format="auto"
+            style={{ display: 'block', minHeight: '90px' }}
+            className="bg-gradient-to-r from-cyan-100 to-blue-100 border-t border-cyan-200 py-2 mt-12"
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // ========== PAGE HOME (BOUTONS RÉDUITS + RÈGLES + CLASSEMENT) ==========
+  if (gameState === 'home') {
+    const myRank = leaderboard.findIndex(p => p.id === playerId) + 1;
+
+    return (
+      <div className="min-h-screen" style={{backgroundImage: 'url(/dicoclash-background-sides.png)', backgroundSize: 'cover', backgroundPosition: 'center'}}>
+        <div className="min-h-screen bg-white/80 backdrop-blur-sm">
           <div className="max-w-4xl mx-auto p-4 md:p-8 space-y-6">
             <div className="text-center">
               <h1 className="text-4xl md:text-5xl font-black text-gray-900 mb-3">
@@ -834,52 +999,40 @@ const DicoClash = () => {
               </div>
             </div>
 
+            {/* BOUTONS JOUER - RÉDUITS */}
             <Card className="border-2 border-cyan-300 shadow-2xl bg-white">
-              <CardContent className="p-8 space-y-4">
-                <h2 className="text-3xl font-black text-gray-900 text-center">Prêt pour l'aventure ?</h2>
-
-                {/* JOUER EN LIGNE */}
+              <CardContent className="p-6 space-y-3">
                 <Button
                   onClick={joinQueue}
-                  className="group relative w-full text-2xl px-16 py-10 h-auto bg-gradient-to-r from-cyan-500 via-blue-500 to-pink-500 hover:from-cyan-600 hover:via-blue-600 hover:to-pink-600 rounded-2xl shadow-2xl font-black transform hover:scale-105 transition-all duration-300"
+                  className="w-full text-lg px-8 py-6 bg-gradient-to-r from-cyan-500 via-blue-500 to-pink-500 hover:from-cyan-600 hover:via-blue-600 hover:to-pink-600 rounded-xl shadow-xl font-black"
                 >
-                  <div className="relative flex items-center justify-center gap-4">
-                    <div className="w-12 h-12 bg-white/30 rounded-full flex items-center justify-center">
-                      <Users className="w-8 h-8 text-white" strokeWidth={3} />
-                    </div>
-                    <span className="text-white">JOUER EN LIGNE</span>
-                  </div>
+                  <Users className="mr-2 w-6 h-6" strokeWidth={3} />
+                  JOUER EN LIGNE
                 </Button>
 
-                {/* JOUER CONTRE BOT */}
                 <Button
                   onClick={startBotGame}
                   disabled={loading}
-                  className="group relative w-full text-xl px-12 py-8 h-auto bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 rounded-2xl shadow-xl font-black transform hover:scale-105 transition-all duration-300"
+                  className="w-full text-base px-6 py-5 bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 rounded-xl shadow-lg font-black"
                 >
-                  <div className="relative flex items-center justify-center gap-3">
-                    <div className="w-10 h-10 bg-white/30 rounded-full flex items-center justify-center">
-                      <Bot className="w-7 h-7 text-white" strokeWidth={3} />
-                    </div>
-                    <span className="text-white">
-                      {loading ? <Loader2 className="w-6 h-6 animate-spin inline" /> : 'JOUER CONTRE UN BOT'}
-                    </span>
-                  </div>
+                  <Bot className="mr-2 w-5 h-5" strokeWidth={3} />
+                  {loading ? <Loader2 className="w-5 h-5 animate-spin inline" /> : 'JOUER CONTRE UN BOT'}
                 </Button>
 
-                <div className="flex justify-center gap-12 mt-6">
+                <div className="flex justify-center gap-8 pt-2">
                   <div className="text-center">
-                    <div className="text-green-600 text-3xl font-black">{onlinePlayers}</div>
+                    <div className="text-green-600 text-2xl font-black">{onlinePlayers}</div>
                     <p className="text-xs text-gray-700 font-bold">En ligne</p>
                   </div>
                   <div className="text-center">
-                    <div className="text-blue-600 text-3xl font-black">{activeGames}</div>
+                    <div className="text-blue-600 text-2xl font-black">{activeGames}</div>
                     <p className="text-xs text-gray-700 font-bold">Parties</p>
                   </div>
                 </div>
               </CardContent>
             </Card>
 
+            {/* STATS */}
             <div className="grid grid-cols-3 gap-4">
               <Card className="bg-gradient-to-br from-yellow-100 to-orange-100 border-2 border-yellow-300 shadow">
                 <CardContent className="p-6 text-center">
@@ -904,22 +1057,90 @@ const DicoClash = () => {
               </Card>
             </div>
 
-            <Card className="border-2 border-blue-300 bg-gradient-to-br from-blue-50 to-cyan-50 shadow">
-              <CardHeader className="pb-3 border-b bg-blue-100">
-                <CardTitle className="flex items-center gap-2 text-lg font-bold text-gray-900">
-                  <Shield className="w-5 h-5 text-blue-600" />
-                  Rappel des règles
+            {/* RÈGLES DÉVELOPPÉES */}
+            <Card className="border-4 border-blue-400 bg-white shadow-xl">
+              <CardHeader className="bg-gradient-to-r from-blue-200 to-cyan-200 border-b-4 border-blue-400 pb-3">
+                <CardTitle className="text-2xl font-black flex items-center gap-2 text-gray-900">
+                  <Shield className="w-7 h-7 text-blue-700" strokeWidth={3} />
+                  RÈGLES DU JEU
                 </CardTitle>
               </CardHeader>
-              <CardContent className="p-4 space-y-3">
-                <div className="flex items-center gap-3 bg-white p-3 rounded-lg border border-blue-200">
-                  <Check className="w-5 h-5 text-green-600 flex-shrink-0" strokeWidth={3} />
-                  <p className="text-sm font-bold text-gray-900">+25 pts par mot trouvé • -10 pts si raté</p>
+              <CardContent className="p-6 space-y-4">
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div className="bg-green-50 p-4 rounded-xl border-2 border-green-300">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Check className="w-6 h-6 text-green-600" strokeWidth={3} />
+                      <h3 className="font-black text-lg text-green-900">SI TROUVÉ</h3>
+                    </div>
+                    <p className="text-sm font-bold text-green-800">+25 points au score total</p>
+                  </div>
+                  <div className="bg-red-50 p-4 rounded-xl border-2 border-red-300">
+                    <div className="flex items-center gap-2 mb-2">
+                      <X className="w-6 h-6 text-red-600" strokeWidth={3} />
+                      <h3 className="font-black text-lg text-red-900">SI RATÉ</h3>
+                    </div>
+                    <p className="text-sm font-bold text-red-800">-10 points au score total</p>
+                  </div>
                 </div>
-                <div className="flex items-center gap-3 bg-white p-3 rounded-lg border border-red-200">
-                  <Ban className="w-5 h-5 text-red-600 flex-shrink-0" strokeWidth={3} />
-                  <p className="text-sm font-bold text-gray-900">Indice ≠ mot à deviner (pas de similitude)</p>
+                <div className="bg-orange-50 p-4 rounded-xl border-2 border-orange-300">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Ban className="w-6 h-6 text-orange-600" strokeWidth={3} />
+                    <h3 className="font-black text-lg text-orange-900">INTERDICTIONS</h3>
+                  </div>
+                  <p className="text-sm font-bold text-orange-800">
+                    ❌ Donner le mot / Mot similaire / Même début ou fin / Trop de similitudes
+                  </p>
                 </div>
+                <div className="bg-cyan-50 p-4 rounded-xl border-2 border-cyan-300">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Clock className="w-6 h-6 text-cyan-600" strokeWidth={3} />
+                    <h3 className="font-black text-lg text-cyan-900">TIMING</h3>
+                  </div>
+                  <p className="text-sm font-bold text-cyan-800">
+                    ⏱️ 60 secondes pour deviner 4 mots • 4 tentatives max par mot
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* CLASSEMENT */}
+            <Card className="border-2 border-yellow-300 bg-white shadow-xl">
+              <CardHeader className="bg-gradient-to-r from-yellow-100 to-orange-100 border-b">
+                <CardTitle className="text-xl font-black flex items-center gap-2 text-gray-900">
+                  <Trophy className="w-6 h-6 text-yellow-600" />
+                  Classement
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-4">
+                {leaderboard.length === 0 ? (
+                  <div className="text-center py-6">
+                    <Loader2 className="w-6 h-6 animate-spin mx-auto text-gray-400 mb-2" />
+                    <p className="text-gray-600 text-sm">Chargement...</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {leaderboard.slice(0, 5).map((player, index) => (
+                      <div key={player.id} className={`flex justify-between items-center p-3 rounded-lg border-2 ${
+                        index === 0 ? 'bg-yellow-100 border-yellow-300' :
+                        index === 1 ? 'bg-gray-100 border-gray-300' :
+                        index === 2 ? 'bg-orange-100 border-orange-300' :
+                        'bg-white border-gray-200'
+                      }`}>
+                        <div className="flex items-center gap-3">
+                          {index === 0 && <Crown className="w-5 h-5 text-yellow-600" />}
+                          {index === 1 && <Star className="w-5 h-5 text-gray-500" />}
+                          {index === 2 && <Star className="w-5 h-5 text-orange-600" />}
+                          <span className="font-black text-gray-600 w-6">#{index + 1}</span>
+                          <span className="font-bold text-gray-900">{player.pseudo}</span>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-xl font-black text-cyan-600">{player.score_giver}</div>
+                          <div className="text-xs text-gray-600">{player.total_games} parties</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -936,18 +1157,10 @@ const DicoClash = () => {
               </Button>
             </div>
           </div>
-
-          <AdBanner
-            slot="4176823157"
-            format="auto"
-            style={{ display: 'block', minHeight: '90px' }}
-            className="bg-gradient-to-r from-cyan-100 to-blue-100 border-t border-cyan-200 py-2 mt-12"
-          />
         </div>
       </div>
     );
   }
-
   // ========== PAGE QUEUE ==========
   if (gameState === 'queue') {
     return (
@@ -983,8 +1196,6 @@ const DicoClash = () => {
 
   // ========== PAGE PLAYING ==========
   if (gameState === 'playing') {
-    const attemptsLeft = 4 - attempts.length;
-
     return (
       <div className="min-h-screen" style={{backgroundImage: 'url(/dicoclash-background-sides.png)', backgroundSize: 'cover', backgroundPosition: 'center'}}>
         <div className="min-h-screen bg-white/80 backdrop-blur-sm p-2 md:p-4">
@@ -1040,13 +1251,13 @@ const DicoClash = () => {
               </Card>
             )}
 
-            {/* MOT À DEVINER (bot ou giver) */}
-            {(isGiver || botMode) && !failedWord && (
+            {/* MOT À DEVINER (giver mode uniquement, pas bot) */}
+            {isGiver && !botMode && !failedWord && (
               <Card className="border-2 border-cyan-300 bg-white shadow">
                 <CardContent className="p-3">
                   <div className="text-center">
                     <div className="inline-block bg-gradient-to-r from-cyan-500 to-blue-600 text-white px-8 py-3 rounded-xl text-3xl font-black shadow">
-                      {botMode ? '???' : word}
+                      {word}
                     </div>
                   </div>
                 </CardContent>
@@ -1111,8 +1322,8 @@ const DicoClash = () => {
             )}
 
             {/* INPUT INDICE (mode online seulement) */}
-            {!botMode && isGiver && attemptsLeft > 0 && !waitingForPartner && !failedWord && (
-              (attempts.length === 0 || (attempts[attempts.length - 1].guess && !attempts[attempts.length - 1].correct)) && (
+            {!botMode && isGiver && !waitingForPartner && !failedWord && (
+              (attempts.length === 0 || (attempts[attempts.length - 1].guess && !attempts[attempts.length - 1].correct)) && attempts.length < 4 && (
                 <Card className="border-2 border-cyan-300 bg-white shadow">
                   <CardContent className="p-3">
                     <form onSubmit={(e) => { e.preventDefault(); sendClue(); }} className="flex gap-2">

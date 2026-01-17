@@ -1,5 +1,14 @@
 import { supabase } from './supabase';
 
+// Normaliser les pseudos (minuscules, pas d'accents)
+const normalizePseudo = (pseudo: string): string => {
+  return pseudo
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+};
+
 // Hash simple avec SHA-256 (crypto natif)
 export const hashPassword = async (password: string): Promise<string> => {
   const encoder = new TextEncoder();
@@ -16,67 +25,84 @@ export const createAccount = async (pseudo: string, password: string) => {
     throw new Error('Le mot de passe doit contenir au moins 8 caractères');
   }
 
+  const normalizedPseudo = normalizePseudo(pseudo);
+
+  // Vérifier si le pseudo normalisé existe déjà
+  const { data: existing } = await supabase
+    .from('accounts')
+    .select('pseudo')
+    .ilike('pseudo', normalizedPseudo);
+
+  if (existing && existing.length > 0) {
+    throw new Error('Ce pseudo est déjà pris (insensible à la casse)');
+  }
+
   const passwordHash = await hashPassword(password);
 
   const { data, error } = await supabase
     .from('accounts')
-    .insert([{ pseudo, password_hash: passwordHash }])
+    .insert([{ pseudo: pseudo.trim(), password_hash: passwordHash }])
     .select()
     .single();
 
   if (error) {
-    if (error.code === '23505') {
-      throw new Error('Ce pseudo est déjà pris');
-    }
-    throw error;
+    throw new Error('Erreur lors de la création du compte');
   }
 
   return data;
 };
 
-// Se connecter
+// Se connecter (insensible à la casse)
 export const login = async (pseudo: string, password: string) => {
   const passwordHash = await hashPassword(password);
+  const normalizedPseudo = normalizePseudo(pseudo);
 
-  const { data, error } = await supabase
+  // Chercher avec ILIKE (insensible à la casse)
+  const { data: accounts } = await supabase
     .from('accounts')
     .select('*')
-    .eq('pseudo', pseudo)
-    .eq('password_hash', passwordHash)
-    .single();
+    .ilike('pseudo', normalizedPseudo);
 
-  if (error || !data) {
+  if (!accounts || accounts.length === 0) {
     throw new Error('Pseudo ou mot de passe incorrect');
   }
 
-  return data;
+  // Vérifier le mot de passe
+  const account = accounts.find(a => a.password_hash === passwordHash);
+
+  if (!account) {
+    throw new Error('Pseudo ou mot de passe incorrect');
+  }
+
+  return account;
 };
 
 // Vérifier si un pseudo est disponible pour un invité
 export const isPseudoAvailableForGuest = async (pseudo: string): Promise<boolean> => {
+  const normalizedPseudo = normalizePseudo(pseudo);
+
   const { data } = await supabase
     .from('accounts')
     .select('pseudo')
-    .eq('pseudo', pseudo)
-    .single();
+    .ilike('pseudo', normalizedPseudo);
 
-  return !data; // Disponible si pas de compte avec ce pseudo
+  return !data || data.length === 0;
 };
 
 // Créer ou récupérer un joueur
 export const getOrCreatePlayer = async (pseudo: string, accountId?: string) => {
   const isGuest = !accountId;
 
-  // Si invité, vérifier que le pseudo n'est pas pris
+  // Si invité, vérifier que le pseudo n'est pas pris (insensible casse)
   if (isGuest) {
     const available = await isPseudoAvailableForGuest(pseudo);
     if (!available) {
-      throw new Error('Ce pseudo est réservé. Créez un compte ou choisissez un autre pseudo.');
+      throw new Error('Ce pseudo est réservé (même avec majuscules différentes). Créez un compte ou choisissez un autre pseudo.');
     }
   }
 
   // Chercher joueur existant
-  let query = supabase.from('players').select('*').eq('pseudo', pseudo);
+  let query = supabase.from('players').select('*').eq('pseudo', pseudo.trim());
 
   if (accountId) {
     query = query.eq('account_id', accountId);
@@ -92,7 +118,7 @@ export const getOrCreatePlayer = async (pseudo: string, accountId?: string) => {
   const { data: newPlayer, error } = await supabase
     .from('players')
     .insert([{
-      pseudo,
+      pseudo: pseudo.trim(),
       account_id: accountId || null,
       is_guest: isGuest
     }])
