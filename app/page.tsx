@@ -131,6 +131,44 @@ const DicoClash = () => {
   const [botHintIndex, setBotHintIndex] = useState(0);
   const [botTimerInterval, setBotTimerInterval] = useState<NodeJS.Timeout | null>(null);
 
+  // CACHE SESSION
+  useEffect(() => {
+    // Charger depuis localStorage au démarrage
+    const cachedPlayerId = localStorage.getItem('dicoclash_playerId');
+    const cachedPseudo = localStorage.getItem('dicoclash_pseudo');
+    const cachedAccountId = localStorage.getItem('dicoclash_accountId');
+    const cachedIsGuest = localStorage.getItem('dicoclash_isGuest');
+
+    if (cachedPlayerId && cachedPseudo) {
+      console.log('🔄 Restoring session from cache');
+      setPlayerId(cachedPlayerId);
+      playerIdRef.current = cachedPlayerId;
+      setPseudo(cachedPseudo);
+      setAccountId(cachedAccountId);
+      setIsGuest(cachedIsGuest === 'true');
+
+      // Recharger les données du joueur
+      reloadPlayerData(cachedPlayerId);
+      setGameState('home');
+    }
+  }, []);
+
+  // Sauvegarder dans localStorage
+  const saveSession = (pId: string, psPseudo: string, accId: string | null, guest: boolean) => {
+    localStorage.setItem('dicoclash_playerId', pId);
+    localStorage.setItem('dicoclash_pseudo', psPseudo);
+    localStorage.setItem('dicoclash_accountId', accId || '');
+    localStorage.setItem('dicoclash_isGuest', guest.toString());
+  };
+
+  // Effacer la session
+  const clearSession = () => {
+    localStorage.removeItem('dicoclash_playerId');
+    localStorage.removeItem('dicoclash_pseudo');
+    localStorage.removeItem('dicoclash_accountId');
+    localStorage.removeItem('dicoclash_isGuest');
+  };
+
   useEffect(() => {
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080';
     let socket: WebSocket | null = null;
@@ -171,6 +209,7 @@ const DicoClash = () => {
             setTimeLeft(60);
             setTeamScore(0);
             setBotMode(false);
+            setFailedWord('');
             setGameState('playing');
             break;
 
@@ -193,12 +232,16 @@ const DicoClash = () => {
             break;
 
           case 'word_failed':
-              console.log('❌ Word failed received:', data.word);
+            console.log('❌ WORD FAILED received:', data.word);
             setFailedWord(data.word);
-            setTimeout(() => setFailedWord(''), 3000);
+            // Garder affiché pendant 3 secondes
+            setTimeout(() => {
+              setFailedWord('');
+            }, 3000);
             break;
 
           case 'new_round':
+            console.log('🔄 New round:', data.round);
             setRound(data.round);
             setIsGiver(data.isGiver);
             setWord(data.word || '');
@@ -337,6 +380,9 @@ const DicoClash = () => {
       setTotalGames(player.total_games);
       setGamesWon(player.games_won);
 
+      // Sauvegarder dans cache
+      saveSession(player.id, pseudo, account.id, false);
+
       if (ws) ws.send(JSON.stringify({ type: 'player_online', playerId: player.id }));
 
       setGameState('home');
@@ -361,6 +407,9 @@ const DicoClash = () => {
       setTotalGames(player.total_games);
       setGamesWon(player.games_won);
 
+      // Sauvegarder dans cache
+      saveSession(player.id, pseudo, account.id, false);
+
       if (ws) ws.send(JSON.stringify({ type: 'player_online', playerId: player.id }));
 
       setGameState('home');
@@ -382,6 +431,9 @@ const DicoClash = () => {
       setPlayerScore(player.score_giver);
       setTotalGames(player.total_games);
       setGamesWon(player.games_won);
+
+      // Sauvegarder dans cache
+      saveSession(player.id, pseudo, null, true);
 
       if (ws) ws.send(JSON.stringify({ type: 'player_online', playerId: player.id }));
 
@@ -405,24 +457,30 @@ const DicoClash = () => {
     setGameState('queue');
   };
 
-  // BOT MODE - Démarrer une partie contre le bot
+  // BOT MODE - FIX COMPLET
   const startBotGame = async () => {
     setLoading(true);
     try {
-      // Récupérer des mots aléatoires avec leurs indices
       const { data: wordsData, error } = await supabase
         .from('words')
-        .select('id, word, word_hints(hint1, hint2, hint3, hint4, hint5, hint6)')
+        .select('id, word, word_hints!inner(hint1, hint2, hint3, hint4, hint5, hint6)')
         .limit(200);
 
       if (error || !wordsData) {
+        console.error('Error loading words:', error);
         alert('Erreur lors du chargement des mots');
         setLoading(false);
         return;
       }
 
-      // Filtrer les mots qui ont des indices
-      const wordsWithHints = wordsData.filter(w => w.word_hints && w.word_hints.length > 0);
+      const wordsWithHints = wordsData
+        .filter(w => w.word_hints && w.word_hints.length > 0)
+        .map(w => ({
+          word: w.word,
+          hints: w.word_hints[0]
+        }));
+
+      console.log('🤖 Words with hints loaded:', wordsWithHints.length);
 
       if (wordsWithHints.length < 4) {
         alert('Pas assez de mots avec indices dans la base');
@@ -430,14 +488,10 @@ const DicoClash = () => {
         return;
       }
 
-      // Sélectionner 4 mots au hasard
       const shuffled = wordsWithHints.sort(() => Math.random() - 0.5);
-      const selectedWords = shuffled.slice(0, 4).map(w => ({
-        word: w.word,
-        hints: w.word_hints[0]
-      }));
+      const selectedWords = shuffled.slice(0, 4);
 
-      console.log('🤖 Bot words selected:', selectedWords);
+      console.log('🤖 Bot game starting with words:', selectedWords.map(w => w.word));
 
       setBotWords(selectedWords);
       setBotMode(true);
@@ -445,10 +499,9 @@ const DicoClash = () => {
       setTeamScore(0);
       setAttempts([]);
       setTimeLeft(60);
-      setIsGiver(false); // Le joueur devine toujours
+      setIsGiver(false);
       setFailedWord('');
 
-      // Préparer les indices pour le premier mot
       const firstWordHints = selectedWords[0].hints;
       const allHints = [
         firstWordHints.hint1,
@@ -459,17 +512,21 @@ const DicoClash = () => {
         firstWordHints.hint6
       ];
       const shuffledHints = allHints.sort(() => Math.random() - 0.5);
+
+      console.log('💡 First word hints:', shuffledHints);
+
       setBotCurrentHints(shuffledHints);
       setBotHintIndex(0);
       setWord(selectedWords[0].word);
 
       setGameState('playing');
-
-      // Démarrer le timer
       startBotTimer();
 
       // Donner le premier indice après 1.5s
-      setTimeout(() => giveBotHint(), 1500);
+      setTimeout(() => {
+        console.log('💡 Giving first hint');
+        giveBotHint();
+      }, 1500);
     } catch (err) {
       console.error('Error starting bot game:', err);
       alert('Erreur lors du démarrage de la partie bot');
@@ -496,15 +553,27 @@ const DicoClash = () => {
   };
 
   const giveBotHint = () => {
-    if (botHintIndex >= 4) return; // Max 4 indices
+    console.log('💡 giveBotHint called - hintIndex:', botHintIndex);
+
+    if (botHintIndex >= 4) {
+      console.log('⚠️ Max hints reached');
+      return;
+    }
+
+    const hint = botCurrentHints[botHintIndex];
+    console.log('💬 Giving hint:', hint);
 
     const newAttempt: Attempt = {
-      clue: botCurrentHints[botHintIndex],
+      clue: hint,
       guess: '',
       correct: false
     };
 
-    setAttempts(prev => [...prev, newAttempt]);
+    setAttempts(prev => {
+      const updated = [...prev, newAttempt];
+      console.log('📝 Attempts updated:', updated);
+      return updated;
+    });
     setBotHintIndex(prev => prev + 1);
   };
 
@@ -515,71 +584,76 @@ const DicoClash = () => {
     const normalizedWord = normalizeString(word);
     const isCorrect = normalizedGuess === normalizedWord;
 
-    const updatedAttempts = [...attempts];
-    const lastAttempt = updatedAttempts[updatedAttempts.length - 1];
-    if (lastAttempt) {
-      lastAttempt.guess = currentGuess;
-      lastAttempt.correct = isCorrect;
-    }
-    setAttempts(updatedAttempts);
+    console.log('🎯 Bot guess:', currentGuess, 'Correct:', isCorrect);
+
+    setAttempts(prev => {
+      const updated = [...prev];
+      const lastAttempt = updated[updated.length - 1];
+      if (lastAttempt) {
+        lastAttempt.guess = currentGuess;
+        lastAttempt.correct = isCorrect;
+      }
+      return updated;
+    });
 
     setCurrentGuess('');
 
     if (isCorrect) {
       setTeamScore(prev => prev + 1);
       setTimeout(() => nextBotRound(), 2000);
-    } else if (updatedAttempts.length >= 4) {
-      // Mot raté
+    } else if (attempts.length >= 4) {
       setFailedWord(word);
       setTimeout(() => {
         setFailedWord('');
         nextBotRound();
       }, 3000);
     } else {
-      // Donner le prochain indice automatiquement
       setTimeout(() => giveBotHint(), 1000);
     }
   };
 
   const nextBotRound = () => {
-  console.log('🔄 nextBotRound called - current round:', round);
+    console.log('🔄 nextBotRound - current round:', round);
 
-  if (round >= 4) {
-    console.log('🏁 Game finished');
-    endBotGame();
-    return;
-  }
+    if (round >= 4) {
+      console.log('🏁 Game finished');
+      endBotGame();
+      return;
+    }
 
-  const nextRoundNum = round + 1;
-  console.log('📍 Moving to round:', nextRoundNum);
+    const nextRoundNum = round + 1;
+    console.log('➡️ Moving to round:', nextRoundNum);
 
-  setRound(nextRoundNum);
-  setAttempts([]);
-  setFailedWord('');
+    // IMPORTANT : Réinitialiser TOUT
+    setRound(nextRoundNum);
+    setAttempts([]);
+    setFailedWord('');
+    setBotHintIndex(0);
 
-  const nextWord = botWords[nextRoundNum - 1];
-  console.log('🎯 Next word:', nextWord.word);
+    const nextWord = botWords[nextRoundNum - 1];
+    console.log('🎯 Next word:', nextWord.word);
 
-  const allHints = [
-    nextWord.hints.hint1,
-    nextWord.hints.hint2,
-    nextWord.hints.hint3,
-    nextWord.hints.hint4,
-    nextWord.hints.hint5,
-    nextWord.hints.hint6
-  ];
-  const shuffledHints = allHints.sort(() => Math.random() - 0.5);
+    const allHints = [
+      nextWord.hints.hint1,
+      nextWord.hints.hint2,
+      nextWord.hints.hint3,
+      nextWord.hints.hint4,
+      nextWord.hints.hint5,
+      nextWord.hints.hint6
+    ];
+    const shuffledHints = allHints.sort(() => Math.random() - 0.5);
 
-  setBotCurrentHints(shuffledHints);
-  setBotHintIndex(0);
-  setWord(nextWord.word);
+    console.log('💡 Next hints:', shuffledHints);
 
-  // IMPORTANT : Donner le premier indice automatiquement après un délai
-  setTimeout(() => {
-    console.log('💡 Giving first hint for round', nextRoundNum);
-    giveBotHint();
-  }, 1500);
-};
+    setBotCurrentHints(shuffledHints);
+    setWord(nextWord.word);
+
+    // Donner le premier indice
+    setTimeout(() => {
+      console.log('💡 Giving first hint for round', nextRoundNum);
+      giveBotHint();
+    }, 1500);
+  };
 
   const endBotGame = () => {
     if (botTimerInterval) {
@@ -591,7 +665,6 @@ const DicoClash = () => {
     updatePlayerStats(teamScore, playerIdRef.current);
     setGameState('results');
   };
-
   const validateClue = (clue: string) => {
     const normalizedClue = normalizeString(clue);
     const normalizedWord = normalizeString(word);
@@ -654,7 +727,8 @@ const DicoClash = () => {
     }));
     setCurrentGuess('');
   };
-  // ========== PAGE AUTH (SEXY + RÈGLES + CLASSEMENT) ==========
+
+  // ========== PAGE AUTH (LOGO + NOM À CÔTÉ) ==========
   if (gameState === 'auth') {
     return (
       <div className="min-h-screen" style={{backgroundImage: 'url(/dicoclash-background-sides.png)', backgroundSize: 'cover', backgroundPosition: 'center'}}>
@@ -667,38 +741,37 @@ const DicoClash = () => {
           />
 
           <div className="max-w-6xl mx-auto p-4 md:p-8 space-y-8">
-            {/* HEADER */}
-            <div className="text-center py-8">
-              <div className="flex items-center justify-center gap-4 mb-6">
+            {/* HEADER COMPACT - LOGO + NOM À CÔTÉ */}
+            <div className="text-center py-6">
+              <div className="flex items-center justify-center gap-4 mb-4">
                 <div className="relative">
-                  <div className="absolute inset-0 bg-gradient-to-br from-cyan-400 to-pink-500 rounded-3xl blur-2xl opacity-40 animate-pulse"></div>
-                  <div className="relative p-6 bg-gradient-to-br from-cyan-500 via-blue-500 to-pink-500 rounded-3xl shadow-2xl">
-                    <Swords className="w-16 h-16 text-white" strokeWidth={2.5} />
+                  <div className="absolute inset-0 bg-gradient-to-br from-cyan-400 to-pink-500 rounded-2xl blur-xl opacity-40 animate-pulse"></div>
+                  <div className="relative p-4 bg-gradient-to-br from-cyan-500 via-blue-500 to-pink-500 rounded-2xl shadow-xl">
+                    <Swords className="w-12 h-12 text-white" strokeWidth={2.5} />
                   </div>
                 </div>
+                <h1 className="text-5xl md:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-600 via-blue-600 to-pink-600">
+                  DicoClash
+                </h1>
               </div>
-
-              <h1 className="text-6xl md:text-8xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-600 via-blue-600 to-pink-600 mb-4">
-                DicoClash
-              </h1>
-              <p className="text-xl md:text-2xl text-gray-800 font-bold">
+              <p className="text-lg md:text-xl text-gray-800 font-bold">
                 Jeu de mots coopératif multijoueur
               </p>
 
-              <div className="flex justify-center gap-8 md:gap-16 py-6">
+              <div className="flex justify-center gap-8 md:gap-16 py-4">
                 <div className="text-center">
-                  <div className="flex items-center justify-center gap-2 text-3xl md:text-4xl font-black text-green-600">
-                    <Users className="w-8 h-8" strokeWidth={3} />
+                  <div className="flex items-center justify-center gap-2 text-2xl md:text-3xl font-black text-green-600">
+                    <Users className="w-6 h-6" strokeWidth={3} />
                     {onlinePlayers}
                   </div>
-                  <p className="text-sm text-gray-700 font-bold mt-1">en ligne</p>
+                  <p className="text-xs text-gray-700 font-bold mt-1">en ligne</p>
                 </div>
                 <div className="text-center">
-                  <div className="flex items-center justify-center gap-2 text-3xl md:text-4xl font-black text-blue-600">
-                    <Zap className="w-8 h-8" strokeWidth={3} />
+                  <div className="flex items-center justify-center gap-2 text-2xl md:text-3xl font-black text-blue-600">
+                    <Zap className="w-6 h-6" strokeWidth={3} />
                     {activeGames}
                   </div>
-                  <p className="text-sm text-gray-700 font-bold mt-1">parties</p>
+                  <p className="text-xs text-gray-700 font-bold mt-1">parties</p>
                 </div>
               </div>
             </div>
@@ -983,8 +1056,7 @@ const DicoClash = () => {
       </div>
     );
   }
-
-  // ========== PAGE HOME (BOUTONS RÉDUITS + RÈGLES + CLASSEMENT) ==========
+  // ========== PAGE HOME ==========
   if (gameState === 'home') {
     const myRank = leaderboard.findIndex(p => p.id === playerId) + 1;
 
@@ -1009,7 +1081,6 @@ const DicoClash = () => {
               </div>
             </div>
 
-            {/* BOUTONS JOUER - RÉDUITS */}
             <Card className="border-2 border-cyan-300 shadow-2xl bg-white">
               <CardContent className="p-6 space-y-3">
                 <Button
@@ -1042,7 +1113,6 @@ const DicoClash = () => {
               </CardContent>
             </Card>
 
-            {/* STATS */}
             <div className="grid grid-cols-3 gap-4">
               <Card className="bg-gradient-to-br from-yellow-100 to-orange-100 border-2 border-yellow-300 shadow">
                 <CardContent className="p-6 text-center">
@@ -1067,7 +1137,6 @@ const DicoClash = () => {
               </Card>
             </div>
 
-            {/* RÈGLES DÉVELOPPÉES */}
             <Card className="border-4 border-blue-400 bg-white shadow-xl">
               <CardHeader className="bg-gradient-to-r from-blue-200 to-cyan-200 border-b-4 border-blue-400 pb-3">
                 <CardTitle className="text-2xl font-black flex items-center gap-2 text-gray-900">
@@ -1113,7 +1182,6 @@ const DicoClash = () => {
               </CardContent>
             </Card>
 
-            {/* CLASSEMENT */}
             <Card className="border-2 border-yellow-300 bg-white shadow-xl">
               <CardHeader className="bg-gradient-to-r from-yellow-100 to-orange-100 border-b">
                 <CardTitle className="text-xl font-black flex items-center gap-2 text-gray-900">
@@ -1157,6 +1225,7 @@ const DicoClash = () => {
             <div className="text-center">
               <Button variant="outline" className="border-2 border-gray-300 bg-white text-gray-900 hover:bg-gray-100" onClick={() => {
                 if (ws) ws.send(JSON.stringify({ type: 'player_offline', playerId }));
+                clearSession();
                 setGameState('auth');
                 setAuthMode('choice');
                 setPseudo('');
@@ -1171,6 +1240,7 @@ const DicoClash = () => {
       </div>
     );
   }
+
   // ========== PAGE QUEUE ==========
   if (gameState === 'queue') {
     return (
@@ -1210,7 +1280,6 @@ const DicoClash = () => {
       <div className="min-h-screen" style={{backgroundImage: 'url(/dicoclash-background-sides.png)', backgroundSize: 'cover', backgroundPosition: 'center'}}>
         <div className="min-h-screen bg-white/80 backdrop-blur-sm p-2 md:p-4">
           <div className="max-w-5xl mx-auto space-y-2">
-            {/* HEADER COMPACT */}
             <div className={`${botMode ? 'bg-gradient-to-r from-purple-500 to-indigo-600' : isGiver ? 'bg-gradient-to-r from-cyan-500 to-blue-600' : 'bg-gradient-to-r from-indigo-500 to-purple-600'} text-white p-3 rounded-xl shadow-lg`}>
               <div className="flex justify-between items-center">
                 <div className="flex items-center gap-4">
@@ -1234,7 +1303,6 @@ const DicoClash = () => {
               </div>
             </div>
 
-            {/* RÈGLES COMPACTES */}
             <Card className="border-2 border-orange-300 bg-orange-50 shadow">
               <CardContent className="p-2">
                 <div className="flex items-center gap-2 text-xs">
@@ -1248,9 +1316,8 @@ const DicoClash = () => {
               </CardContent>
             </Card>
 
-            {/* MOT RATÉ */}
             {failedWord && (
-              <Card className="border-4 border-red-500 bg-red-50 shadow-2xl">
+              <Card className="border-4 border-red-500 bg-red-50 shadow-2xl animate-pulse">
                 <CardContent className="p-6 text-center">
                   <X className="w-16 h-16 text-red-600 mx-auto mb-2" strokeWidth={3} />
                   <p className="text-2xl font-black text-red-900">LOUPÉ !</p>
@@ -1261,7 +1328,6 @@ const DicoClash = () => {
               </Card>
             )}
 
-            {/* MOT À DEVINER (giver mode uniquement, pas bot) */}
             {isGiver && !botMode && !failedWord && (
               <Card className="border-2 border-cyan-300 bg-white shadow">
                 <CardContent className="p-3">
@@ -1274,7 +1340,6 @@ const DicoClash = () => {
               </Card>
             )}
 
-            {/* INDICES ET RÉPONSES */}
             <div className="grid md:grid-cols-2 gap-2">
               <Card className="border-2 border-blue-300 bg-white shadow">
                 <CardHeader className="pb-2 bg-gradient-to-r from-blue-100 to-cyan-100 border-b py-2">
@@ -1323,7 +1388,6 @@ const DicoClash = () => {
               </Card>
             </div>
 
-            {/* ERREUR INDICE */}
             {clueError && (
               <div className="p-3 bg-red-100 border-2 border-red-400 rounded-xl flex items-center gap-2 shadow">
                 <AlertCircle className="w-5 h-5 text-red-600" strokeWidth={3} />
@@ -1331,7 +1395,6 @@ const DicoClash = () => {
               </div>
             )}
 
-            {/* INPUT INDICE (mode online seulement) */}
             {!botMode && isGiver && !waitingForPartner && !failedWord && (
               (attempts.length === 0 || (attempts[attempts.length - 1].guess && !attempts[attempts.length - 1].correct)) && attempts.length < 4 && (
                 <Card className="border-2 border-cyan-300 bg-white shadow">
@@ -1356,7 +1419,6 @@ const DicoClash = () => {
               )
             )}
 
-            {/* INPUT RÉPONSE (bot ou online) */}
             {(botMode || !isGiver) && attempts.length > 0 && !attempts[attempts.length - 1].guess && !waitingForPartner && !failedWord && (
               <Card className="border-2 border-indigo-300 bg-white shadow">
                 <CardContent className="p-3">
@@ -1380,7 +1442,6 @@ const DicoClash = () => {
               </Card>
             )}
 
-            {/* ATTENTE PARTENAIRE */}
             {!botMode && waitingForPartner && !failedWord && (
               <div className="text-center py-4 bg-white rounded-xl border-2 border-gray-200 shadow">
                 <Loader2 className="w-6 h-6 mx-auto mb-2 animate-spin text-cyan-600" strokeWidth={3} />
