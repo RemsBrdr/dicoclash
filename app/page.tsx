@@ -4,8 +4,9 @@ import React, { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Swords, Users, Send, Loader2, Trophy, Star, Play, Target, Shield, Crown, AlertCircle, Zap, X, Clock, Award, Ban, Check } from "lucide-react";
+import { Swords, Users, Send, Loader2, Trophy, Star, Play, Target, Shield, Crown, AlertCircle, Zap, X, Clock, Award, Ban, Check, Bot, LogIn, UserPlus } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { createAccount, login, getOrCreatePlayer } from "@/lib/auth";
 
 // ========== COMPOSANT PUBLICITÉ ==========
 const AdBanner = ({
@@ -71,6 +72,15 @@ interface LeaderboardEntry {
   games_won: number;
 }
 
+interface BotHints {
+  hint1: string;
+  hint2: string;
+  hint3: string;
+  hint4: string;
+  hint5: string;
+  hint6: string;
+}
+
 const normalizeString = (str: string) => {
   return str
     .normalize("NFD")
@@ -82,8 +92,13 @@ const normalizeString = (str: string) => {
 const DicoClash = () => {
   AdSenseInit();
 
-  const [gameState, setGameState] = useState<"welcome" | "home" | "queue" | "playing" | "results">("welcome");
+  const [gameState, setGameState] = useState<"auth" | "welcome" | "home" | "queue" | "playing" | "results">("auth");
+  const [authMode, setAuthMode] = useState<"choice" | "login" | "register" | "guest">("choice");
   const [pseudo, setPseudo] = useState("");
+  const [password, setPassword] = useState("");
+  const [accountId, setAccountId] = useState<string | null>(null);
+  const [isGuest, setIsGuest] = useState(true);
+
   const [ws, setWs] = useState<WebSocket | null>(null);
   const [playerId, setPlayerId] = useState("");
   const playerIdRef = useRef("");
@@ -107,6 +122,14 @@ const DicoClash = () => {
   const [queueSize, setQueueSize] = useState(0);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [clueError, setClueError] = useState("");
+  const [failedWord, setFailedWord] = useState("");
+
+  // BOT MODE
+  const [botMode, setBotMode] = useState(false);
+  const [botWords, setBotWords] = useState<Array<{word: string, hints: BotHints}>>([]);
+  const [botCurrentHints, setBotCurrentHints] = useState<string[]>([]);
+  const [botHintIndex, setBotHintIndex] = useState(0);
+  const [botTimerInterval, setBotTimerInterval] = useState<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080';
@@ -130,18 +153,15 @@ const DicoClash = () => {
 
         switch (data.type) {
           case 'stats_update':
-            console.log('📊 Stats update - Games:', data.activeGames, 'Players:', data.onlinePlayers);
             setActiveGames(data.activeGames);
             setOnlinePlayers(data.onlinePlayers);
             break;
 
           case 'queue_update':
-            console.log('👥 Queue update - Size:', data.queueSize);
             setQueueSize(data.queueSize);
             break;
 
           case 'game_start':
-            console.log('🎮 GAME START:', data);
             setGameId(data.gameId);
             setPartnerPseudo(data.partnerPseudo);
             setIsGiver(data.isGiver);
@@ -150,42 +170,41 @@ const DicoClash = () => {
             setAttempts([]);
             setTimeLeft(60);
             setTeamScore(0);
+            setBotMode(false);
             setGameState('playing');
             break;
 
           case 'new_clue':
-            console.log('💬 New clue received');
             setAttempts(data.attempts);
             setWaitingForPartner(false);
             break;
 
           case 'clue_sent':
-            console.log('✅ Clue sent confirmation');
             setAttempts(data.attempts);
             setWaitingForPartner(true);
             break;
 
           case 'new_guess':
-            console.log('🎯 New guess - Correct:', data.correct);
             setAttempts(data.attempts);
             setWaitingForPartner(false);
             if (data.correct) {
-              setTeamScore(prev => {
-                const newScore = prev + 1;
-                console.log('✅ Team score incremented:', newScore);
-                return newScore;
-              });
+              setTeamScore(prev => prev + 1);
             }
             break;
 
+          case 'word_failed':
+            setFailedWord(data.word);
+            setTimeout(() => setFailedWord(''), 3000);
+            break;
+
           case 'new_round':
-            console.log('🔄 New round:', data.round);
             setRound(data.round);
             setIsGiver(data.isGiver);
             setWord(data.word || '');
             setAttempts([]);
             setTimeLeft(60);
             setWaitingForPartner(false);
+            setFailedWord('');
             break;
 
           case 'timer_update':
@@ -193,15 +212,12 @@ const DicoClash = () => {
             break;
 
           case 'game_end':
-            console.log('🏁 GAME END - teamScore received:', data.teamScore);
-            console.log('🔍 playerIdRef.current:', playerIdRef.current);
             setTeamScore(data.teamScore);
             updatePlayerStats(data.teamScore, playerIdRef.current);
             setGameState('results');
             break;
 
           case 'partner_disconnected':
-            console.log('👋 Partner disconnected');
             alert('Votre complice s\'est déconnecté');
             reloadPlayerData(playerIdRef.current);
             setGameState('home');
@@ -219,10 +235,8 @@ const DicoClash = () => {
         if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
           reconnectAttempts++;
           const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 10000);
-          console.log(`🔄 Reconnecting in ${delay}ms (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
           setTimeout(connect, delay);
         } else {
-          console.error('❌ Max reconnection attempts reached');
           setWs(null);
         }
       };
@@ -244,38 +258,27 @@ const DicoClash = () => {
   }, []);
 
   const loadStats = async () => {
-    const { data: topPlayers, error } = await supabase
+    const { data: topPlayers } = await supabase
       .from('players')
       .select('id, pseudo, score_giver, total_games, games_won')
       .order('score_giver', { ascending: false })
       .limit(10);
 
-    if (error) {
-      console.error('❌ Error loading leaderboard:', error);
-    } else if (topPlayers) {
-      console.log('📊 Leaderboard loaded:', topPlayers.length, 'players');
+    if (topPlayers) {
       setLeaderboard(topPlayers);
     }
   };
 
   const reloadPlayerData = async (pId: string) => {
-    if (!pId) {
-      console.warn('⚠️ No playerId to reload');
-      return;
-    }
+    if (!pId) return;
 
-    console.log('🔄 Reloading player data for:', pId);
-
-    const { data: player, error } = await supabase
+    const { data: player } = await supabase
       .from('players')
       .select('*')
       .eq('id', pId)
       .single();
 
-    if (error) {
-      console.error('❌ Error reloading player:', error);
-    } else if (player) {
-      console.log('✅ Player data reloaded:', player);
+    if (player) {
       setPlayerScore(player.score_giver);
       setTotalGames(player.total_games);
       setGamesWon(player.games_won);
@@ -283,160 +286,114 @@ const DicoClash = () => {
   };
 
   const updatePlayerStats = async (finalScore: number, pId: string) => {
-    console.log('═══════════════════════════════════════');
-    console.log('📊 DÉBUT updatePlayerStats');
-    console.log('playerId reçu:', pId);
-    console.log('finalScore (teamScore):', finalScore);
-
-    if (!pId) {
-      console.error('❌ ERREUR : Pas de playerId !');
-      alert('Erreur : Impossible de mettre à jour le score (pas de playerId)');
-      return;
-    }
+    if (!pId) return;
 
     const wordsFound = finalScore;
     const wordsMissed = 4 - finalScore;
     const pointsGained = (wordsFound * 25) - (wordsMissed * 10);
     const isPerfect = finalScore === 4;
 
-    console.log('Calculs :');
-    console.log('  - Mots trouvés:', wordsFound);
-    console.log('  - Mots manqués:', wordsMissed);
-    console.log('  - Points gagnés:', pointsGained);
-    console.log('  - Partie parfaite ?', isPerfect);
-
-    console.log('🔍 Récupération du joueur actuel...');
-    const { data: currentPlayer, error: fetchError } = await supabase
+    const { data: currentPlayer } = await supabase
       .from('players')
       .select('*')
       .eq('id', pId)
       .single();
 
-    if (fetchError) {
-      console.error('❌ ERREUR fetch player:', fetchError);
-      alert('Erreur fetch : ' + fetchError.message);
-      return;
-    }
-
-    if (!currentPlayer) {
-      console.error('❌ ERREUR : Joueur non trouvé !');
-      alert('Erreur : Joueur non trouvé dans la base de données');
-      return;
-    }
-
-    console.log('✅ Joueur actuel récupéré:', currentPlayer);
+    if (!currentPlayer) return;
 
     const newScore = currentPlayer.score_giver + pointsGained;
     const newTotalGames = currentPlayer.total_games + 1;
     const newGamesWon = currentPlayer.games_won + (isPerfect ? 1 : 0);
 
-    console.log('💾 MISE À JOUR vers :');
-    console.log('  - Ancien score:', currentPlayer.score_giver, '→ Nouveau:', newScore);
-    console.log('  - Anciennes parties:', currentPlayer.total_games, '→ Nouvelles:', newTotalGames);
-    console.log('  - Anciennes victoires:', currentPlayer.games_won, '→ Nouvelles:', newGamesWon);
-
-    const { data: updatedData, error: updateError } = await supabase
+    await supabase
       .from('players')
       .update({
         score_giver: newScore,
         total_games: newTotalGames,
         games_won: newGamesWon
       })
-      .eq('id', pId)
-      .select();
-
-    if (updateError) {
-      console.error('❌ ERREUR UPDATE:', updateError);
-      alert('Erreur de mise à jour : ' + updateError.message + '\n\nVérifie les RLS (Row Level Security) dans Supabase !');
-      return;
-    }
-
-    console.log('✅ UPDATE réussi dans Supabase !');
-    console.log('Données mises à jour:', updatedData);
+      .eq('id', pId);
 
     setPlayerScore(newScore);
     setTotalGames(newTotalGames);
     setGamesWon(newGamesWon);
 
-    console.log('✅ État local React mis à jour');
-    console.log('═══════════════════════════════════════');
-
     await loadStats();
-    console.log('✅ Classement rechargé');
   };
 
+  // AUTHENTIFICATION
   const handleLogin = async () => {
-    if (!ws || ws.readyState !== WebSocket.OPEN || !pseudo.trim()) return;
-
     setLoading(true);
-    console.log('🔐 Login attempt for pseudo:', pseudo.trim());
-
     try {
-      const { data: existingPlayer, error: searchError } = await supabase
-        .from('players')
-        .select('*')
-        .eq('pseudo', pseudo.trim())
-        .single();
+      const account = await login(pseudo, password);
+      const player = await getOrCreatePlayer(pseudo, account.id);
 
-      if (searchError && searchError.code !== 'PGRST116') {
-        console.error('❌ Search error:', searchError);
-        throw searchError;
-      }
-
-      let player;
-
-      if (existingPlayer) {
-        console.log('✅ Joueur existant trouvé:', existingPlayer);
-        player = existingPlayer;
-        await supabase.from('players').update({ last_played: new Date().toISOString() }).eq('id', player.id);
-      } else {
-        console.log('➕ Création d\'un nouveau joueur');
-        const { data: newPlayer, error } = await supabase
-          .from('players')
-          .insert([{ pseudo: pseudo.trim() }])
-          .select()
-          .single();
-
-        if (error || !newPlayer) {
-          console.error('❌ Erreur création joueur:', error);
-          alert('Erreur lors de la création du joueur');
-          setLoading(false);
-          return;
-        }
-
-        player = newPlayer;
-        console.log('✅ Nouveau joueur créé:', player);
-      }
-
+      setAccountId(account.id);
+      setIsGuest(false);
       setPlayerId(player.id);
       playerIdRef.current = player.id;
       setPlayerScore(player.score_giver);
       setTotalGames(player.total_games);
       setGamesWon(player.games_won);
 
-      console.log('✅ État local initialisé:', {
-        id: player.id,
-        score: player.score_giver,
-        games: player.total_games,
-        won: player.games_won
-      });
-      console.log('✅ playerIdRef.current:', playerIdRef.current);
-
-      ws.send(JSON.stringify({ type: 'player_online', playerId: player.id }));
+      if (ws) ws.send(JSON.stringify({ type: 'player_online', playerId: player.id }));
 
       setGameState('home');
-    } catch (err) {
-      console.error('❌ Login error:', err);
-      alert('Erreur de connexion');
+    } catch (err: any) {
+      alert(err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const joinQueue = async () => {
-    if (!ws || ws.readyState !== WebSocket.OPEN || !playerId) return;
+  const handleRegister = async () => {
+    setLoading(true);
+    try {
+      const account = await createAccount(pseudo, password);
+      const player = await getOrCreatePlayer(pseudo, account.id);
 
-    console.log('🎮 Joining queue - playerId:', playerId, 'pseudo:', pseudo);
+      setAccountId(account.id);
+      setIsGuest(false);
+      setPlayerId(player.id);
+      playerIdRef.current = player.id;
+      setPlayerScore(player.score_giver);
+      setTotalGames(player.total_games);
+      setGamesWon(player.games_won);
+
+      if (ws) ws.send(JSON.stringify({ type: 'player_online', playerId: player.id }));
+
+      setGameState('home');
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGuest = async () => {
+    setLoading(true);
+    try {
+      const player = await getOrCreatePlayer(pseudo);
+
+      setIsGuest(true);
+      setPlayerId(player.id);
+      playerIdRef.current = player.id;
+      setPlayerScore(player.score_giver);
+      setTotalGames(player.total_games);
+      setGamesWon(player.games_won);
+
+      if (ws) ws.send(JSON.stringify({ type: 'player_online', playerId: player.id }));
+
+      setGameState('home');
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const joinQueue = () => {
+    if (!ws || ws.readyState !== WebSocket.OPEN || !playerId) return;
 
     ws.send(JSON.stringify({
       type: 'join_queue',
@@ -446,6 +403,175 @@ const DicoClash = () => {
 
     setGameState('queue');
   };
+
+  // BOT MODE - Démarrer une partie contre le bot
+  const startBotGame = async () => {
+    setLoading(true);
+    try {
+      // Récupérer 4 mots aléatoires avec leurs indices
+      const { data: wordsData, error } = await supabase
+        .from('words')
+        .select('id, word, word_hints(hint1, hint2, hint3, hint4, hint5, hint6)')
+        .limit(100);
+
+      if (error || !wordsData) {
+        alert('Erreur lors du chargement des mots');
+        setLoading(false);
+        return;
+      }
+
+      // Filtrer les mots qui ont des indices
+      const wordsWithHints = wordsData.filter(w => w.word_hints && w.word_hints.length > 0);
+
+      // Sélectionner 4 mots au hasard
+      const shuffled = wordsWithHints.sort(() => Math.random() - 0.5);
+      const selectedWords = shuffled.slice(0, 4).map(w => ({
+        word: w.word,
+        hints: w.word_hints[0]
+      }));
+
+      setBotWords(selectedWords);
+      setBotMode(true);
+      setRound(1);
+      setTeamScore(0);
+      setAttempts([]);
+      setTimeLeft(60);
+      setIsGiver(false); // Le joueur devine toujours
+
+      // Préparer les indices pour le premier mot
+      const firstWordHints = selectedWords[0].hints;
+      const allHints = [
+        firstWordHints.hint1,
+        firstWordHints.hint2,
+        firstWordHints.hint3,
+        firstWordHints.hint4,
+        firstWordHints.hint5,
+        firstWordHints.hint6
+      ];
+      const shuffledHints = allHints.sort(() => Math.random() - 0.5);
+      setBotCurrentHints(shuffledHints);
+      setBotHintIndex(0);
+      setWord(selectedWords[0].word);
+
+      setGameState('playing');
+
+      // Démarrer le timer
+      startBotTimer();
+    } catch (err) {
+      console.error('Error starting bot game:', err);
+      alert('Erreur lors du démarrage de la partie bot');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const startBotTimer = () => {
+    if (botTimerInterval) clearInterval(botTimerInterval);
+
+    const interval = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          endBotGame();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    setBotTimerInterval(interval);
+  };
+
+  const giveBotHint = () => {
+    if (botHintIndex >= 4) return; // Max 4 indices
+
+    const newAttempt: Attempt = {
+      clue: botCurrentHints[botHintIndex],
+      guess: '',
+      correct: false
+    };
+
+    setAttempts(prev => [...prev, newAttempt]);
+    setBotHintIndex(prev => prev + 1);
+  };
+
+  const sendBotGuess = () => {
+    if (!currentGuess.trim()) return;
+
+    const normalizedGuess = normalizeString(currentGuess);
+    const normalizedWord = normalizeString(word);
+    const isCorrect = normalizedGuess === normalizedWord;
+
+    const lastAttempt = attempts[attempts.length - 1];
+    if (lastAttempt) {
+      lastAttempt.guess = currentGuess;
+      lastAttempt.correct = isCorrect;
+      setAttempts([...attempts]);
+    }
+
+    setCurrentGuess('');
+
+    if (isCorrect) {
+      setTeamScore(prev => prev + 1);
+      setTimeout(() => nextBotRound(), 2000);
+    } else if (attempts.length >= 4) {
+      // Mot raté
+      setFailedWord(word);
+      setTimeout(() => {
+        setFailedWord('');
+        nextBotRound();
+      }, 3000);
+    } else {
+      // Donner le prochain indice automatiquement
+      setTimeout(() => giveBotHint(), 1000);
+    }
+  };
+
+  const nextBotRound = () => {
+    if (round >= 4) {
+      endBotGame();
+      return;
+    }
+
+    const nextRound = round + 1;
+    setRound(nextRound);
+    setAttempts([]);
+
+    const nextWord = botWords[nextRound - 1];
+    const allHints = [
+      nextWord.hints.hint1,
+      nextWord.hints.hint2,
+      nextWord.hints.hint3,
+      nextWord.hints.hint4,
+      nextWord.hints.hint5,
+      nextWord.hints.hint6
+    ];
+    const shuffledHints = allHints.sort(() => Math.random() - 0.5);
+
+    setBotCurrentHints(shuffledHints);
+    setBotHintIndex(0);
+    setWord(nextWord.word);
+
+    // Donner le premier indice automatiquement
+    setTimeout(() => giveBotHint(), 1000);
+  };
+
+  const endBotGame = () => {
+    if (botTimerInterval) {
+      clearInterval(botTimerInterval);
+      setBotTimerInterval(null);
+    }
+
+    updatePlayerStats(teamScore, playerIdRef.current);
+    setGameState('results');
+  };
+
+  // Donner le premier indice automatiquement au début
+  useEffect(() => {
+    if (botMode && gameState === 'playing' && attempts.length === 0 && botHintIndex === 0) {
+      setTimeout(() => giveBotHint(), 1500);
+    }
+  }, [botMode, gameState]);
 
   const validateClue = (clue: string) => {
     const normalizedClue = normalizeString(clue);
@@ -486,8 +612,6 @@ const DicoClash = () => {
 
     setClueError("");
 
-    console.log('💬 Sending clue:', currentClue.trim());
-
     ws.send(JSON.stringify({
       type: 'send_clue',
       gameId,
@@ -497,9 +621,12 @@ const DicoClash = () => {
   };
 
   const sendGuess = () => {
-    if (!ws || !currentGuess.trim()) return;
+    if (botMode) {
+      sendBotGuess();
+      return;
+    }
 
-    console.log('🎯 Sending guess:', currentGuess.trim());
+    if (!ws || !currentGuess.trim()) return;
 
     ws.send(JSON.stringify({
       type: 'send_guess',
@@ -509,240 +636,173 @@ const DicoClash = () => {
     setCurrentGuess('');
   };
 
-  // ========== PAGE WELCOME ==========
-  if (gameState === 'welcome') {
+  // ========== PAGE AUTH ==========
+  if (gameState === 'auth') {
     return (
       <div className="min-h-screen" style={{backgroundImage: 'url(/dicoclash-background-sides.png)', backgroundSize: 'cover', backgroundPosition: 'center'}}>
-        <div className="min-h-screen bg-white/80 backdrop-blur-sm">
-          <AdBanner
-            slot="4176823157"
-            format="auto"
-            style={{ display: 'block', minHeight: '90px' }}
-            className="bg-gradient-to-r from-cyan-100 to-blue-100 border-b border-cyan-200 py-2"
-          />
-
-          <div className="max-w-6xl mx-auto p-4 md:p-8 space-y-8">
-            <div className="text-center py-12 space-y-6">
-              <div className="flex items-center justify-center gap-4 mb-6">
-                <div className="relative">
-                  <div className="absolute inset-0 bg-gradient-to-br from-cyan-400 to-pink-500 rounded-3xl blur-2xl opacity-40 animate-pulse"></div>
-                  <div className="relative p-6 bg-gradient-to-br from-cyan-500 via-blue-500 to-pink-500 rounded-3xl shadow-2xl">
-                    <Swords className="w-16 h-16 text-white" strokeWidth={2.5} />
-                  </div>
-                </div>
+        <div className="min-h-screen bg-white/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <Card className="w-full max-w-md border-2 border-cyan-300 shadow-2xl bg-white">
+            <CardHeader className="bg-gradient-to-r from-cyan-100 to-blue-100 border-b">
+              <div className="text-center">
+                <Swords className="w-16 h-16 mx-auto mb-4 text-cyan-600" />
+                <CardTitle className="text-3xl font-black text-gray-900">DicoClash</CardTitle>
               </div>
+            </CardHeader>
+            <CardContent className="p-8 space-y-4">
+              {authMode === 'choice' && (
+                <>
+                  <Button
+                    onClick={() => setAuthMode('guest')}
+                    className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-black py-6 text-lg"
+                  >
+                    <Play className="mr-2 w-6 h-6" fill="white" />
+                    JOUER EN INVITÉ
+                  </Button>
 
-              <h1 className="text-6xl md:text-8xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-600 via-blue-600 to-pink-600">
-                DicoClash
-              </h1>
-              <p className="text-xl md:text-2xl text-gray-800 font-bold">
-                Jeu de mots coopératif multijoueur
-              </p>
-
-              <div className="flex justify-center gap-8 md:gap-16 py-6">
-                <div className="text-center">
-                  <div className="flex items-center justify-center gap-2 text-3xl md:text-4xl font-black text-green-600">
-                    <Users className="w-8 h-8" strokeWidth={3} />
-                    {onlinePlayers}
+                  <div className="relative">
+                    <div className="absolute inset-0 flex items-center">
+                      <span className="w-full border-t border-gray-300" />
+                    </div>
+                    <div className="relative flex justify-center text-xs uppercase">
+                      <span className="bg-white px-2 text-gray-500 font-bold">Ou</span>
+                    </div>
                   </div>
-                  <p className="text-sm text-gray-700 font-bold mt-1">en ligne</p>
-                </div>
-                <div className="text-center">
-                  <div className="flex items-center justify-center gap-2 text-3xl md:text-4xl font-black text-blue-600">
-                    <Zap className="w-8 h-8" strokeWidth={3} />
-                    {activeGames}
-                  </div>
-                  <p className="text-sm text-gray-700 font-bold mt-1">parties</p>
-                </div>
-              </div>
 
-              <Card className="max-w-md mx-auto border-2 border-cyan-300 shadow-2xl bg-white">
-                <CardContent className="p-8 space-y-4">
+                  <Button
+                    onClick={() => setAuthMode('login')}
+                    variant="outline"
+                    className="w-full border-2 border-cyan-500 text-cyan-700 font-black py-6 text-lg hover:bg-cyan-50"
+                  >
+                    <LogIn className="mr-2 w-5 h-5" />
+                    SE CONNECTER
+                  </Button>
+
+                  <Button
+                    onClick={() => setAuthMode('register')}
+                    variant="outline"
+                    className="w-full border-2 border-pink-500 text-pink-700 font-black py-6 text-lg hover:bg-pink-50"
+                  >
+                    <UserPlus className="mr-2 w-5 h-5" />
+                    CRÉER UN COMPTE
+                  </Button>
+                </>
+              )}
+
+              {authMode === 'guest' && (
+                <>
+                  <Button
+                    onClick={() => setAuthMode('choice')}
+                    variant="ghost"
+                    className="mb-4"
+                  >
+                    ← Retour
+                  </Button>
                   <input
                     type="text"
                     value={pseudo}
                     onChange={(e) => setPseudo(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
+                    onKeyPress={(e) => e.key === 'Enter' && handleGuest()}
                     placeholder="Votre pseudo..."
-                    className="w-full px-5 py-4 text-lg font-bold border-2 border-cyan-300 bg-white text-gray-900 placeholder-gray-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
+                    className="w-full px-5 py-4 text-lg font-bold border-2 border-cyan-300 bg-white text-gray-900 placeholder-gray-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
                     maxLength={20}
                     disabled={loading}
                   />
                   <Button
-                    onClick={handleLogin}
-                    disabled={!pseudo.trim() || !ws || ws.readyState !== WebSocket.OPEN || loading}
-                    className="group relative w-full bg-gradient-to-r from-cyan-500 via-blue-500 to-pink-500 hover:from-cyan-600 hover:via-blue-600 hover:to-pink-600 text-white text-xl font-black py-6 rounded-xl shadow-xl transition-all transform hover:scale-105"
+                    onClick={handleGuest}
+                    disabled={!pseudo.trim() || loading}
+                    className="w-full bg-gradient-to-r from-green-500 to-emerald-600 text-white font-black py-6 text-lg"
                   >
-                    <div className="relative flex items-center justify-center gap-2">
-                      {loading ? (
-                        <>
-                          <Loader2 className="w-6 h-6 animate-spin" />
-                          Connexion...
-                        </>
-                      ) : (
-                        <>
-                          <Play className="w-6 h-6" fill="white" strokeWidth={0} />
-                          JOUER MAINTENANT
-                        </>
-                      )}
-                    </div>
+                    {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : 'CONTINUER'}
                   </Button>
-                  {(!ws || ws.readyState !== WebSocket.OPEN) && (
-                    <div className="bg-blue-50 border-2 border-blue-300 rounded-lg p-4">
-                      <div className="flex items-center gap-3 mb-2">
-                        <Loader2 className="w-5 h-5 text-blue-600 animate-spin flex-shrink-0" />
-                        <p className="text-sm font-black text-blue-900">🚀 Vous êtes le premier !</p>
-                      </div>
-                      <p className="text-xs text-blue-700 font-medium">Le serveur démarre pour vous, patientez quelques secondes...</p>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
+                  <p className="text-xs text-gray-600 text-center">
+                    ⚠️ Les pseudos avec compte sont protégés
+                  </p>
+                </>
+              )}
 
-            {/* RÈGLES DU JEU - VERSION ENRICHIE */}
-            <Card className="border-4 border-blue-400 bg-white shadow-2xl">
-              <CardHeader className="bg-gradient-to-r from-blue-200 to-cyan-200 border-b-4 border-blue-400">
-                <CardTitle className="text-3xl font-black flex items-center gap-3 text-gray-900">
-                  <Target className="w-8 h-8 text-cyan-700" strokeWidth={3} />
-                  RÈGLES DU JEU
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-8">
-                <div className="grid md:grid-cols-2 gap-8">
-                  <div className="space-y-6">
-                    <div className="flex gap-4 items-start bg-cyan-50 p-4 rounded-xl border-2 border-cyan-200">
-                      <Target className="w-10 h-10 text-cyan-600 flex-shrink-0" strokeWidth={2.5} />
-                      <div>
-                        <h3 className="font-black text-xl text-gray-900 mb-2">OBJECTIF</h3>
-                        <p className="text-base font-bold text-gray-800">Deviner 4 mots en équipe avec des indices</p>
-                      </div>
-                    </div>
+              {authMode === 'login' && (
+                <>
+                  <Button
+                    onClick={() => setAuthMode('choice')}
+                    variant="ghost"
+                    className="mb-4"
+                  >
+                    ← Retour
+                  </Button>
+                  <input
+                    type="text"
+                    value={pseudo}
+                    onChange={(e) => setPseudo(e.target.value)}
+                    placeholder="Pseudo"
+                    className="w-full px-5 py-4 text-lg font-bold border-2 border-cyan-300 bg-white text-gray-900 placeholder-gray-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                    maxLength={20}
+                    disabled={loading}
+                  />
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
+                    placeholder="Mot de passe"
+                    className="w-full px-5 py-4 text-lg font-bold border-2 border-cyan-300 bg-white text-gray-900 placeholder-gray-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                    disabled={loading}
+                  />
+                  <Button
+                    onClick={handleLogin}
+                    disabled={!pseudo.trim() || !password.trim() || loading}
+                    className="w-full bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-black py-6 text-lg"
+                  >
+                    {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : 'SE CONNECTER'}
+                  </Button>
+                </>
+              )}
 
-                    <div className="flex gap-4 items-start bg-orange-50 p-4 rounded-xl border-2 border-orange-200">
-                      <Clock className="w-10 h-10 text-orange-600 flex-shrink-0" strokeWidth={2.5} />
-                      <div>
-                        <h3 className="font-black text-xl text-gray-900 mb-2">TEMPS LIMITÉ</h3>
-                        <p className="text-base font-bold text-gray-800">60 secondes pour toute la partie</p>
-                      </div>
-                    </div>
-
-                    <div className="flex gap-4 items-start bg-purple-50 p-4 rounded-xl border-2 border-purple-200">
-                      <Users className="w-10 h-10 text-purple-600 flex-shrink-0" strokeWidth={2.5} />
-                      <div>
-                        <h3 className="font-black text-xl text-gray-900 mb-2">COOPÉRATION</h3>
-                        <p className="text-base font-bold text-gray-800">4 tentatives maximum par mot</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-6">
-                    <div className="flex gap-4 items-start bg-green-50 p-4 rounded-xl border-2 border-green-300">
-                      <Award className="w-10 h-10 text-green-600 flex-shrink-0" strokeWidth={2.5} />
-                      <div>
-                        <h3 className="font-black text-xl text-gray-900 mb-2">SCORING</h3>
-                        <p className="text-base font-bold text-green-700">✅ +25 points par mot trouvé</p>
-                        <p className="text-base font-bold text-red-700 mt-1">❌ -10 points par mot raté</p>
-                      </div>
-                    </div>
-
-                    <div className="bg-red-50 p-6 rounded-xl border-4 border-red-400">
-                      <div className="flex gap-3 items-start mb-3">
-                        <Ban className="w-8 h-8 text-red-600 flex-shrink-0" strokeWidth={3} />
-                        <h3 className="font-black text-xl text-red-900">INDICES INTERDITS</h3>
-                      </div>
-                      <ul className="space-y-2 text-sm font-bold text-red-800">
-                        <li className="flex items-start gap-2">
-                          <X className="w-5 h-5 flex-shrink-0 mt-0.5" />
-                          Donner le mot lui-même
-                        </li>
-                        <li className="flex items-start gap-2">
-                          <X className="w-5 h-5 flex-shrink-0 mt-0.5" />
-                          Mot contenant le mot à deviner
-                        </li>
-                        <li className="flex items-start gap-2">
-                          <X className="w-5 h-5 flex-shrink-0 mt-0.5" />
-                          Même début ou fin de mot
-                        </li>
-                        <li className="flex items-start gap-2">
-                          <X className="w-5 h-5 flex-shrink-0 mt-0.5" />
-                          Trop de lettres en commun
-                        </li>
-                      </ul>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-2 border-yellow-300 bg-white shadow-xl">
-              <CardHeader className="bg-gradient-to-r from-yellow-100 to-orange-100 border-b">
-                <CardTitle className="text-2xl font-black flex items-center gap-2 text-gray-900">
-                  <Trophy className="w-6 h-6 text-yellow-600" />
-                  Classement
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-6">
-                {leaderboard.length === 0 ? (
-                  <div className="text-center py-8">
-                    <Loader2 className="w-8 h-8 animate-spin mx-auto text-gray-400 mb-2" />
-                    <p className="text-gray-600">Chargement...</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {leaderboard.map((player, index) => (
-                      <div key={player.id} className={`flex justify-between items-center p-4 rounded-xl border-2 transition-all ${
-                        index === 0 ? 'bg-yellow-100 border-yellow-300' :
-                        index === 1 ? 'bg-gray-100 border-gray-300' :
-                        index === 2 ? 'bg-orange-100 border-orange-300' :
-                        'bg-white border-gray-200'
-                      }`}>
-                        <div className="flex items-center gap-4">
-                          {index === 0 && <Crown className="w-6 h-6 text-yellow-600" />}
-                          {index === 1 && <Star className="w-6 h-6 text-gray-500" />}
-                          {index === 2 && <Star className="w-6 h-6 text-orange-600" />}
-                          <span className="font-black text-gray-600 text-lg w-8">#{index + 1}</span>
-                          <span className="font-bold text-lg text-gray-900">{player.pseudo}</span>
-                        </div>
-                        <div className="text-right">
-                          <div className="text-2xl font-black text-cyan-600">{player.score_giver}</div>
-                          <div className="text-xs text-gray-600 font-medium">{player.total_games} parties • {player.games_won} parfaites</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            <div className="grid md:grid-cols-2 gap-4">
-              <AdBanner
-                slot="2847445522"
-                format="auto"
-                style={{ display: 'block', minHeight: '250px' }}
-                className="bg-gradient-to-br from-blue-100 to-cyan-100 border-2 border-blue-200 rounded-xl p-4 shadow"
-              />
-              <AdBanner
-                slot="6580652886"
-                format="auto"
-                style={{ display: 'block', minHeight: '250px' }}
-                className="bg-gradient-to-br from-pink-100 to-purple-100 border-2 border-pink-200 rounded-xl p-4 shadow"
-              />
-            </div>
-          </div>
-
-          <AdBanner
-            slot="4176823157"
-            format="auto"
-            style={{ display: 'block', minHeight: '90px' }}
-            className="bg-gradient-to-r from-cyan-100 to-blue-100 border-t border-cyan-200 py-2 mt-12"
-          />
+              {authMode === 'register' && (
+                <>
+                  <Button
+                    onClick={() => setAuthMode('choice')}
+                    variant="ghost"
+                    className="mb-4"
+                  >
+                    ← Retour
+                  </Button>
+                  <input
+                    type="text"
+                    value={pseudo}
+                    onChange={(e) => setPseudo(e.target.value)}
+                    placeholder="Pseudo"
+                    className="w-full px-5 py-4 text-lg font-bold border-2 border-pink-300 bg-white text-gray-900 placeholder-gray-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500"
+                    maxLength={20}
+                    disabled={loading}
+                  />
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && handleRegister()}
+                    placeholder="Mot de passe (min 8 caractères)"
+                    className="w-full px-5 py-4 text-lg font-bold border-2 border-pink-300 bg-white text-gray-900 placeholder-gray-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500"
+                    disabled={loading}
+                  />
+                  <Button
+                    onClick={handleRegister}
+                    disabled={!pseudo.trim() || !password.trim() || loading}
+                    className="w-full bg-gradient-to-r from-pink-500 to-purple-600 text-white font-black py-6 text-lg"
+                  >
+                    {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : 'CRÉER MON COMPTE'}
+                  </Button>
+                  <p className="text-xs text-gray-600 text-center">
+                    ✅ Votre pseudo sera protégé
+                  </p>
+                </>
+              )}
+            </CardContent>
+          </Card>
         </div>
       </div>
     );
   }
-
-// ========== PAGE HOME ==========
+  // ========== PAGE HOME ==========
   if (gameState === 'home') {
     const myRank = leaderboard.findIndex(p => p.id === playerId) + 1;
 
@@ -759,7 +819,7 @@ const DicoClash = () => {
           <div className="max-w-4xl mx-auto p-4 md:p-8 space-y-6">
             <div className="text-center">
               <h1 className="text-4xl md:text-5xl font-black text-gray-900 mb-3">
-                {pseudo}
+                {pseudo} {isGuest && <Badge className="text-sm bg-gray-400">Invité</Badge>}
               </h1>
               <div className="flex justify-center gap-4 flex-wrap">
                 <Badge className="text-lg px-6 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 text-white border-0 shadow-lg">
@@ -775,19 +835,38 @@ const DicoClash = () => {
             </div>
 
             <Card className="border-2 border-cyan-300 shadow-2xl bg-white">
-              <CardContent className="p-8 text-center space-y-6">
-                <h2 className="text-3xl font-black text-gray-900">Prêt pour l'aventure ?</h2>
+              <CardContent className="p-8 space-y-4">
+                <h2 className="text-3xl font-black text-gray-900 text-center">Prêt pour l'aventure ?</h2>
+
+                {/* JOUER EN LIGNE */}
                 <Button
                   onClick={joinQueue}
-                  className="group relative text-2xl px-20 py-10 h-auto bg-gradient-to-r from-cyan-500 via-blue-500 to-pink-500 hover:from-cyan-600 hover:via-blue-600 hover:to-pink-600 rounded-2xl shadow-2xl font-black transform hover:scale-105 transition-all duration-300"
+                  className="group relative w-full text-2xl px-16 py-10 h-auto bg-gradient-to-r from-cyan-500 via-blue-500 to-pink-500 hover:from-cyan-600 hover:via-blue-600 hover:to-pink-600 rounded-2xl shadow-2xl font-black transform hover:scale-105 transition-all duration-300"
                 >
                   <div className="relative flex items-center justify-center gap-4">
                     <div className="w-12 h-12 bg-white/30 rounded-full flex items-center justify-center">
-                      <Play className="w-8 h-8 text-white" fill="white" strokeWidth={0} />
+                      <Users className="w-8 h-8 text-white" strokeWidth={3} />
                     </div>
-                    <span className="text-white">JOUER</span>
+                    <span className="text-white">JOUER EN LIGNE</span>
                   </div>
                 </Button>
+
+                {/* JOUER CONTRE BOT */}
+                <Button
+                  onClick={startBotGame}
+                  disabled={loading}
+                  className="group relative w-full text-xl px-12 py-8 h-auto bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 rounded-2xl shadow-xl font-black transform hover:scale-105 transition-all duration-300"
+                >
+                  <div className="relative flex items-center justify-center gap-3">
+                    <div className="w-10 h-10 bg-white/30 rounded-full flex items-center justify-center">
+                      <Bot className="w-7 h-7 text-white" strokeWidth={3} />
+                    </div>
+                    <span className="text-white">
+                      {loading ? <Loader2 className="w-6 h-6 animate-spin inline" /> : 'JOUER CONTRE UN BOT'}
+                    </span>
+                  </div>
+                </Button>
+
                 <div className="flex justify-center gap-12 mt-6">
                   <div className="text-center">
                     <div className="text-green-600 text-3xl font-black">{onlinePlayers}</div>
@@ -825,7 +904,6 @@ const DicoClash = () => {
               </Card>
             </div>
 
-            {/* RAPPEL RÈGLES VERSION COMPACTE */}
             <Card className="border-2 border-blue-300 bg-gradient-to-br from-blue-50 to-cyan-50 shadow">
               <CardHeader className="pb-3 border-b bg-blue-100">
                 <CardTitle className="flex items-center gap-2 text-lg font-bold text-gray-900">
@@ -845,26 +923,13 @@ const DicoClash = () => {
               </CardContent>
             </Card>
 
-            <div className="grid md:grid-cols-2 gap-4">
-              <AdBanner
-                slot="2847445522"
-                format="auto"
-                style={{ display: 'block', minHeight: '250px' }}
-                className="bg-gradient-to-br from-blue-100 to-cyan-100 border-2 border-blue-200 rounded-xl p-4 shadow"
-              />
-              <AdBanner
-                slot="6580652886"
-                format="auto"
-                style={{ display: 'block', minHeight: '250px' }}
-                className="bg-gradient-to-br from-pink-100 to-purple-100 border-2 border-pink-200 rounded-xl p-4 shadow"
-              />
-            </div>
-
             <div className="text-center">
               <Button variant="outline" className="border-2 border-gray-300 bg-white text-gray-900 hover:bg-gray-100" onClick={() => {
                 if (ws) ws.send(JSON.stringify({ type: 'player_offline', playerId }));
-                setGameState('welcome');
+                setGameState('auth');
+                setAuthMode('choice');
                 setPseudo('');
+                setPassword('');
               }}>
                 <X className="w-4 h-4 mr-2" />
                 Déconnexion
@@ -916,7 +981,7 @@ const DicoClash = () => {
     );
   }
 
-// ========== PAGE PLAYING ==========
+  // ========== PAGE PLAYING ==========
   if (gameState === 'playing') {
     const attemptsLeft = 4 - attempts.length;
 
@@ -925,13 +990,13 @@ const DicoClash = () => {
         <div className="min-h-screen bg-white/80 backdrop-blur-sm p-2 md:p-4">
           <div className="max-w-5xl mx-auto space-y-2">
             {/* HEADER COMPACT */}
-            <div className={`${isGiver ? 'bg-gradient-to-r from-cyan-500 to-blue-600' : 'bg-gradient-to-r from-indigo-500 to-purple-600'} text-white p-3 rounded-xl shadow-lg`}>
+            <div className={`${botMode ? 'bg-gradient-to-r from-purple-500 to-indigo-600' : isGiver ? 'bg-gradient-to-r from-cyan-500 to-blue-600' : 'bg-gradient-to-r from-indigo-500 to-purple-600'} text-white p-3 rounded-xl shadow-lg`}>
               <div className="flex justify-between items-center">
                 <div className="flex items-center gap-4">
                   <div>
                     <div className="text-lg font-black">MANCHE {round}/4</div>
-                    <Badge className={`${isGiver ? 'bg-white text-cyan-700' : 'bg-white text-indigo-700'} border-0 font-bold text-xs`}>
-                      {isGiver ? "🎯 VOUS DONNEZ" : "🔍 VOUS DEVINEZ"}
+                    <Badge className={`${botMode ? 'bg-white text-purple-700' : isGiver ? 'bg-white text-cyan-700' : 'bg-white text-indigo-700'} border-0 font-bold text-xs`}>
+                      {botMode ? "🤖 MODE BOT" : isGiver ? "🎯 VOUS DONNEZ" : "🔍 VOUS DEVINEZ"}
                     </Badge>
                   </div>
                   <div className="text-3xl font-black">
@@ -939,7 +1004,7 @@ const DicoClash = () => {
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <div className="text-sm font-bold">avec {partnerPseudo}</div>
+                  {!botMode && <div className="text-sm font-bold">avec {partnerPseudo}</div>}
                   <div className={`text-3xl font-black ${timeLeft > 30 ? 'text-green-300' : timeLeft > 10 ? 'text-yellow-300' : 'text-red-300 animate-pulse'} flex items-center gap-1`}>
                     <Clock className="w-6 h-6" />
                     {timeLeft}s
@@ -956,33 +1021,46 @@ const DicoClash = () => {
                   <div className="flex gap-4 flex-wrap">
                     <span className="font-bold text-green-800">✅ +25pts trouvé</span>
                     <span className="font-bold text-red-800">❌ -10pts raté</span>
-                    {isGiver && <span className="font-bold text-orange-800">🚫 Pas de mot similaire</span>}
+                    {!botMode && isGiver && <span className="font-bold text-orange-800">🚫 Pas de mot similaire</span>}
                   </div>
                 </div>
               </CardContent>
             </Card>
 
-            {/* MOT À DEVINER COMPACT */}
-            {isGiver && (
+            {/* MOT RATÉ */}
+            {failedWord && (
+              <Card className="border-4 border-red-500 bg-red-50 shadow-2xl">
+                <CardContent className="p-6 text-center">
+                  <X className="w-16 h-16 text-red-600 mx-auto mb-2" strokeWidth={3} />
+                  <p className="text-2xl font-black text-red-900">LOUPÉ !</p>
+                  <p className="text-lg font-bold text-red-800 mt-2">
+                    Le mot était : <span className="text-3xl">{failedWord}</span>
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* MOT À DEVINER (bot ou giver) */}
+            {(isGiver || botMode) && !failedWord && (
               <Card className="border-2 border-cyan-300 bg-white shadow">
                 <CardContent className="p-3">
                   <div className="text-center">
                     <div className="inline-block bg-gradient-to-r from-cyan-500 to-blue-600 text-white px-8 py-3 rounded-xl text-3xl font-black shadow">
-                      {word}
+                      {botMode ? '???' : word}
                     </div>
                   </div>
                 </CardContent>
               </Card>
             )}
 
-            {/* INDICES ET RÉPONSES CÔTE À CÔTE */}
+            {/* INDICES ET RÉPONSES */}
             <div className="grid md:grid-cols-2 gap-2">
               <Card className="border-2 border-blue-300 bg-white shadow">
                 <CardHeader className="pb-2 bg-gradient-to-r from-blue-100 to-cyan-100 border-b py-2">
                   <CardTitle className="text-sm font-black flex items-center gap-2 text-gray-900">
-                    {!isGiver && <span className="text-cyan-600">→</span>}
-                    INDICES
-                    {!isGiver && <span className="text-cyan-600">←</span>}
+                    {(!isGiver || botMode) && <span className="text-cyan-600">→</span>}
+                    INDICES {botMode && <Bot className="w-4 h-4 text-purple-600" />}
+                    {(!isGiver || botMode) && <span className="text-cyan-600">←</span>}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="p-2 space-y-1">
@@ -1001,9 +1079,9 @@ const DicoClash = () => {
               <Card className="border-2 border-indigo-300 bg-white shadow">
                 <CardHeader className="pb-2 bg-gradient-to-r from-indigo-100 to-purple-100 border-b py-2">
                   <CardTitle className="text-sm font-black flex items-center gap-2 text-gray-900">
-                    {isGiver && <span className="text-indigo-600">→</span>}
+                    {(isGiver && !botMode) && <span className="text-indigo-600">→</span>}
                     RÉPONSES
-                    {isGiver && <span className="text-indigo-600">←</span>}
+                    {(isGiver && !botMode) && <span className="text-indigo-600">←</span>}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="p-2 space-y-1">
@@ -1032,8 +1110,8 @@ const DicoClash = () => {
               </div>
             )}
 
-            {/* INPUT INDICE */}
-            {isGiver && attemptsLeft > 0 && !waitingForPartner && (
+            {/* INPUT INDICE (mode online seulement) */}
+            {!botMode && isGiver && attemptsLeft > 0 && !waitingForPartner && !failedWord && (
               (attempts.length === 0 || (attempts[attempts.length - 1].guess && !attempts[attempts.length - 1].correct)) && (
                 <Card className="border-2 border-cyan-300 bg-white shadow">
                   <CardContent className="p-3">
@@ -1057,8 +1135,8 @@ const DicoClash = () => {
               )
             )}
 
-            {/* INPUT RÉPONSE */}
-            {!isGiver && attempts.length > 0 && !attempts[attempts.length - 1].guess && !waitingForPartner && (
+            {/* INPUT RÉPONSE (bot ou online) */}
+            {(botMode || !isGiver) && attempts.length > 0 && !attempts[attempts.length - 1].guess && !waitingForPartner && !failedWord && (
               <Card className="border-2 border-indigo-300 bg-white shadow">
                 <CardContent className="p-3">
                   <form onSubmit={(e) => { e.preventDefault(); sendGuess(); }}>
@@ -1082,7 +1160,7 @@ const DicoClash = () => {
             )}
 
             {/* ATTENTE PARTENAIRE */}
-            {waitingForPartner && (
+            {!botMode && waitingForPartner && !failedWord && (
               <div className="text-center py-4 bg-white rounded-xl border-2 border-gray-200 shadow">
                 <Loader2 className="w-6 h-6 mx-auto mb-2 animate-spin text-cyan-600" strokeWidth={3} />
                 <p className="text-gray-900 font-bold text-sm">En attente de {partnerPseudo}...</p>
@@ -1130,7 +1208,11 @@ const DicoClash = () => {
                 <h2 className="text-5xl font-black text-gray-900 mb-2">
                   {isPerfect ? "PARFAIT !" : teamScore >= 2 ? "BIEN JOUÉ !" : "PERDU..."}
                 </h2>
-                <p className="text-gray-700 text-lg font-medium">avec {partnerPseudo}</p>
+                {botMode ? (
+                  <p className="text-gray-700 text-lg font-medium">Mode Bot 🤖</p>
+                ) : (
+                  <p className="text-gray-700 text-lg font-medium">avec {partnerPseudo}</p>
+                )}
               </div>
 
               <div className="text-center py-8 bg-gradient-to-r from-cyan-100 to-blue-100 rounded-2xl border-2 border-cyan-300">
@@ -1169,9 +1251,8 @@ const DicoClash = () => {
               </div>
 
               <Button onClick={() => {
-                console.log('🔄 Retour à l\'accueil - Rechargement des données...');
-                console.log('playerIdRef.current:', playerIdRef.current);
                 reloadPlayerData(playerIdRef.current);
+                setBotMode(false);
                 setGameState('home');
               }} className="w-full bg-gradient-to-r from-cyan-500 via-blue-500 to-pink-500 hover:from-cyan-600 hover:via-blue-600 hover:to-pink-600 text-2xl font-black py-8 rounded-xl shadow-lg transform hover:scale-105 transition-all">
                 <Play className="mr-3 w-8 h-8" strokeWidth={3} fill="white" />
